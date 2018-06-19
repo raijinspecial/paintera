@@ -5,12 +5,10 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Optional;
-import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.stream.Collectors;
 
@@ -118,33 +116,10 @@ public class MeshManagerWithAssignmentForSegments implements MeshManager< Long, 
 	{
 		synchronized ( neurons )
 		{
+			this.removeAllMeshes();
 			final long[] selectedSegments = this.selectedSegments.getSelectedSegments();
-			final TLongHashSet selectedSegmentsSet = new TLongHashSet( selectedSegments );
-			final Set< Long > currentlyShowing = new HashSet<>();
-			final List< Entry< Long, MeshGenerator< TLongHashSet > > > toBeRemoved = new ArrayList<>();
-			neurons.keySet().forEach( currentlyShowing::add );
-			for ( final Entry< Long, MeshGenerator< TLongHashSet > > neuron : neurons.entrySet() )
-			{
-				final long segment = neuron.getKey();
-				final TLongHashSet fragmentsInSegment = assignment.getFragments( segment );
-				final boolean isSelected = selectedSegmentsSet.contains( segment );
-				final boolean isConsistent = neuron.getValue().getId().equals( fragmentsInSegment );
-				LOG.debug( "Fragments in segment {}: {}", segment, fragmentsInSegment );
-				LOG.debug( "Segment {} is selected? {}  Is consistent? {}", neuron.getKey(), isSelected, isConsistent );
-				if ( !isSelected || !isConsistent )
-				{
-					currentlyShowing.remove( neuron.getKey() );
-					toBeRemoved.add( neuron );
-				}
-
-			}
-			toBeRemoved.stream().map( e -> e.getValue() ).forEach( this::removeMesh );
-			LOG.debug( "Currently showing {} ", currentlyShowing );
-			LOG.debug( "Selection {}", selectedSegments );
-			LOG.debug( "To be removed {}", toBeRemoved );
 			Arrays
 					.stream( selectedSegments )
-					.filter( id -> !currentlyShowing.contains( id ) )
 					.forEach( this::generateMesh );
 		}
 	}
