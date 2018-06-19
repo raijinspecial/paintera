@@ -26,6 +26,8 @@ import net.imglib2.type.numeric.ARGBType;
  */
 public class ARGBCompositeAlphaYCbCr implements Composite< ARGBType, ARGBType >
 {
+	private static final double norm = 1.0 / 255.0;
+
 	final static private double det( final double[] a )
 	{
 		assert a.length == 9 : "Supports 3x3 double[] only.";
@@ -119,15 +121,15 @@ public class ARGBCompositeAlphaYCbCr implements Composite< ARGBType, ARGBType >
 		final int argbA = a.get();
 		final int argbB = b.get();
 
-		final double rA = ARGBType.red( argbA ) / 255.0;
-		final double rB = ARGBType.red( argbB ) / 255.0;
-		final double gA = ARGBType.green( argbA ) / 255.0;
-		final double gB = ARGBType.green( argbB ) / 255.0;
-		final double bA = ARGBType.blue( argbA ) / 255.0;
-		final double bB = ARGBType.blue( argbB ) / 255.0;
+		final double rA = ARGBType.red( argbA ) * norm;
+		final double rB = ARGBType.red( argbB ) * norm;
+		final double gA = ARGBType.green( argbA ) * norm;
+		final double gB = ARGBType.green( argbB ) * norm;
+		final double bA = ARGBType.blue( argbA ) * norm;
+		final double bB = ARGBType.blue( argbB ) * norm;
 
-		final double aA = ARGBType.alpha( argbA ) / 255.0;
-		final double aB = ARGBType.alpha( argbB ) / 255.0;
+		final double aA = ARGBType.alpha( argbA ) * norm;
+		final double aB = ARGBType.alpha( argbB ) * norm;
 //		final double aB = ( rB == gB || gB == bB ) ? ARGBType.alpha( argbB ) / 255.0 * 0.5 : ARGBType.alpha( argbB ) / 255.0 * 0.125;
 
 		final double aTarget = aA + aB - aA * aB;
