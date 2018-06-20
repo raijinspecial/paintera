@@ -174,12 +174,15 @@ public class MeshManagerWithAssignmentForSegments implements MeshManager< Long, 
 	@Override
 	public void removeMesh( final Long id )
 	{
-		Optional
-				.ofNullable( neurons.remove( id ) )
-				.ifPresent( nfx -> {
-					nfx.interrupt();
-					nfx.isEnabledProperty().set( false );
-				} );
+		synchronized ( neurons )
+		{
+			Optional
+					.ofNullable( neurons.remove( id ) )
+					.ifPresent( nfx -> {
+						nfx.interrupt();
+						nfx.isEnabledProperty().set( false );
+					} );
+		}
 	}
 
 	@Override
@@ -203,8 +206,11 @@ public class MeshManagerWithAssignmentForSegments implements MeshManager< Long, 
 	@Override
 	public void removeAllMeshes()
 	{
-		final ArrayList< Long > ids = new ArrayList<>( unmodifiableMeshMap().keySet() );
-		ids.forEach( this::removeMesh );
+		synchronized ( this.neurons )
+		{
+			final ArrayList< Long > ids = new ArrayList<>( unmodifiableMeshMap().keySet() );
+			ids.forEach( this::removeMesh );
+		}
 	}
 
 	@Override
