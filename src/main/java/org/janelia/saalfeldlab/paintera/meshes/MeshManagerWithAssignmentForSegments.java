@@ -5,12 +5,9 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
-import java.util.Map.Entry;
 import java.util.Optional;
 import java.util.concurrent.ExecutorService;
-import java.util.stream.Collectors;
 
 import org.janelia.saalfeldlab.paintera.control.assignment.FragmentSegmentAssignmentState;
 import org.janelia.saalfeldlab.paintera.control.assignment.FragmentsInSelectedSegments;
@@ -177,23 +174,12 @@ public class MeshManagerWithAssignmentForSegments implements MeshManager< Long, 
 	@Override
 	public void removeMesh( final Long id )
 	{
-		Optional.ofNullable( unmodifiableMeshMap().get( id ) ).ifPresent( this::removeMesh );
-	}
-
-	private void removeMesh( final MeshGenerator< TLongHashSet > mesh )
-	{
-		mesh.isEnabledProperty().set( false );
-		final List< Long > toRemove = this.neurons
-				.entrySet()
-				.stream()
-				.filter( e -> e.getValue().getId().equals( mesh.getId() ) )
-				.map( Entry::getKey )
-				.collect( Collectors.toList() );
-		toRemove
-				.stream()
-				.map( this.neurons::remove )
-				.filter( n -> n != null )
-				.forEach( MeshGenerator::interrupt );
+		Optional
+				.ofNullable( neurons.remove( id ) )
+				.ifPresent( nfx -> {
+					nfx.interrupt();
+					nfx.isEnabledProperty().set( false );
+				} );
 	}
 
 	@Override
@@ -217,8 +203,8 @@ public class MeshManagerWithAssignmentForSegments implements MeshManager< Long, 
 	@Override
 	public void removeAllMeshes()
 	{
-		final ArrayList< MeshGenerator< TLongHashSet > > generatorsCopy = new ArrayList<>( unmodifiableMeshMap().values() );
-		generatorsCopy.forEach( this::removeMesh );
+		final ArrayList< Long > ids = new ArrayList<>( unmodifiableMeshMap().keySet() );
+		ids.forEach( this::removeMesh );
 	}
 
 	@Override
