@@ -161,6 +161,7 @@ public class MeshGeneratorJobManager< T >
 					setNumberOfCompletedTasks.accept( 0 );
 				}
 
+				if ( this.isInterrupted ) { return null; }
 				workers.submit( () -> {
 					try
 					{
