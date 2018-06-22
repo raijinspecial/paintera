@@ -1,6 +1,7 @@
 package org.janelia.saalfeldlab.paintera.state;
 
 import java.lang.invoke.MethodHandles;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
@@ -80,6 +81,8 @@ public class LabelSourceState< D, T >
 
 	private final LockedSegmentsState lockedSegments;
 
+	private final List< Runnable > runOnClearBlockCaches = new ArrayList<>();
+
 	public LabelSourceState(
 			final DataSource< D, T > dataSource,
 			final HighlightingStreamConverter< T > converter,
@@ -106,7 +109,10 @@ public class LabelSourceState< D, T >
 		final SelectedSegments selectedSegments = new SelectedSegments( selectedIds, assignment );
 
 		final InterruptibleFunctionAndCache< Long, Interval[] >[] backgroundBlockCaches = PainteraBaseView.generateLabelBlocksForLabelCache( dataSource );
-		this.clearBlockCaches = () -> Arrays.stream( backgroundBlockCaches ).forEach( UncheckedCache::invalidateAll );
+		this.clearBlockCaches = () -> {
+			Arrays.stream( backgroundBlockCaches ).forEach( UncheckedCache::invalidateAll );
+			this.runOnClearBlockCaches.forEach( Runnable::run );
+		};
 
 		final boolean isMaskedSource = dataSource instanceof MaskedSource< ?, ? >;
 		final InterruptibleFunction< Long, Interval[] >[] blockCaches = isMaskedSource
@@ -147,6 +153,16 @@ public class LabelSourceState< D, T >
 		assignment.addListener( obs -> stain() );
 		selectedIds.addListener( obs -> stain() );
 		lockedSegments.addListener( obs -> stain() );
+	}
+
+	public void addActionOnClearBlockCache( final Runnable r )
+	{
+		this.runOnClearBlockCaches.add( r );
+	}
+
+	public void removeActionOnClearBlockCache( final Runnable r )
+	{
+		this.runOnClearBlockCaches.remove( r );
 	}
 
 	public ToIdConverter toIdConverter()
