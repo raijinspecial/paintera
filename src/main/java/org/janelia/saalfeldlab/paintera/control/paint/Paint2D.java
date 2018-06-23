@@ -31,18 +31,12 @@ import net.imglib2.Interval;
 import net.imglib2.Point;
 import net.imglib2.RandomAccessible;
 import net.imglib2.RandomAccessibleInterval;
-import net.imglib2.RealRandomAccessible;
 import net.imglib2.algorithm.region.hypersphere.HyperSphere;
-import net.imglib2.interpolation.randomaccess.NearestNeighborInterpolatorFactory;
 import net.imglib2.realtransform.AffineTransform3D;
-import net.imglib2.realtransform.RealViews;
-import net.imglib2.realtransform.Scale3D;
-import net.imglib2.realtransform.Translation3D;
 import net.imglib2.type.numeric.integer.UnsignedByteType;
 import net.imglib2.type.numeric.integer.UnsignedLongType;
 import net.imglib2.util.Intervals;
 import net.imglib2.util.LinAlgHelpers;
-import net.imglib2.view.MixedTransformView;
 import net.imglib2.view.Views;
 
 public class Paint2D
@@ -252,61 +246,27 @@ public class Paint2D
 		final AffineTransform3D labelToViewerTransform = this.labelToViewerTransform;
 		final AffineTransform3D globalToViewerTransform = this.globalToViewerTransform;
 
-		final double range = 0.5;
-
-		// radius is in global coordinates, scale from viewer coordinates to
-		// global coordinates
-		final double scale = Affine3DHelpers.extractScale( globalToViewerTransform, 0 );
-		final long xScale = Math.round( viewerX / scale );
-		final long yScale = Math.round( viewerY / scale );
-
-		final Point p = new Point( xScale, yScale );
-
-		final AffineTransform3D tf = labelToViewerTransform.copy();
-		tf.preConcatenate( new Scale3D( 1.0 / scale, 1.0 / scale, 1.0 / scale ) );
-
-		final AffineTransform3D tfFront = tf.copy().preConcatenate( new Translation3D( 0, 0, -range ) );
-		final AffineTransform3D tfBack = tf.copy().preConcatenate( new Translation3D( 0, 0, range ) );
-
+		final double[] point = { viewerX, viewerY, 0 };
+		labelToViewerTransform.applyInverse( point, point );
+		final long[] pos = Arrays.stream( point ).mapToLong( Math::round ).toArray();
+		final double labelScaleX = Affine3DHelpers.extractScale( this.labelToGlobalTransform, 0 );
 		final RandomAccessible< UnsignedByteType > labelsExtended = Views.extendValue( labels, new UnsignedByteType( 1 ) );
-		final RealRandomAccessible< UnsignedByteType > interpolated = Views.interpolate( labelsExtended, new NearestNeighborInterpolatorFactory<>() );
-		final MixedTransformView< UnsignedByteType > front = Views.hyperSlice( RealViews.affine( interpolated, tfFront ), 2, 0l );
-		final MixedTransformView< UnsignedByteType > back = Views.hyperSlice( RealViews.affine( interpolated, tfBack ), 2, 0l );
-
-		final double dr = this.brushRadius.get();
+		final double dr = this.brushRadius.get() / labelScaleX;
 		final long r = Math.round( dr );
+		new HyperSphere<>( Views.hyperSlice( labelsExtended, 2, pos[ 2 ] ), new Point( pos[ 0 ], pos[ 1 ] ), r ).forEach( UnsignedByteType::setOne );
 		final long tBeforePaint1 = System.currentTimeMillis();
-		final long t0 = System.currentTimeMillis();
-		new HyperSphere<>( front, p, r ).forEach( UnsignedByteType::setOne );
-		final long t1 = System.currentTimeMillis();
-		new HyperSphere<>( back, p, r ).forEach( UnsignedByteType::setOne );
-		final long t2 = System.currentTimeMillis();
 
 		final long tAfterPaint0 = System.currentTimeMillis();
 
 		// add painted interval
-		final double[] topLeft = { Math.floor( xScale - dr ), Math.floor( yScale - dr ), 0 };
-		final double[] bottomRight = { Math.ceil( xScale + dr ), Math.ceil( yScale + dr ), 0 };
-
-		tf.applyInverse( topLeft, topLeft );
-		tf.applyInverse( bottomRight, bottomRight );
-
-		final long[] tl = new long[ 3 ];
-		final long[] br = new long[ 3 ];
-		Arrays.setAll( tl, d -> ( long ) Math.floor( Math.min( topLeft[ d ], bottomRight[ d ] ) ) );
-		Arrays.setAll( br, d -> ( long ) Math.ceil( Math.max( topLeft[ d ], bottomRight[ d ] ) ) );
+		final long[] tl = { pos[ 0 ] - r, pos[ 1 ] - r, pos[ 2 ] };
+		final long[] br = { pos[ 0 ] + r, pos[ 1 ] + r, pos[ 2 ] };
 
 		final FinalInterval trackedInterval = new FinalInterval( tl, br );
 		this.interval.set( Intervals.union( trackedInterval, Optional.ofNullable( this.interval.get() ).orElse( trackedInterval ) ) );
 
 		final long tAfterPaint1 = System.currentTimeMillis();
 
-		LOG.trace(
-				"before paint {}ms paint1 {}ms paint2 {}ms after paint{}",
-				tBeforePaint1 - tBeforePaint0,
-				t1 - t0,
-				t2 - t1,
-				tAfterPaint1 - tAfterPaint0 );
 	}
 
 	private class PaintDrag extends MouseDragFX
