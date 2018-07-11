@@ -6,8 +6,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 
-import org.janelia.saalfeldlab.fx.event.EventFX;
-import org.janelia.saalfeldlab.fx.event.MouseDragFX;
+import org.janelia.saalfeldlab.fx.event.InstallAndRemove;
 import org.janelia.saalfeldlab.paintera.data.DataSource;
 import org.janelia.saalfeldlab.paintera.data.mask.MaskInUse;
 import org.janelia.saalfeldlab.paintera.data.mask.MaskInfo;
@@ -24,6 +23,9 @@ import bdv.viewer.Source;
 import javafx.beans.property.DoubleProperty;
 import javafx.beans.property.SimpleDoubleProperty;
 import javafx.beans.property.SimpleObjectProperty;
+import javafx.event.EventHandler;
+import javafx.event.EventType;
+import javafx.scene.Node;
 import javafx.scene.input.MouseEvent;
 import net.imglib2.Interval;
 import net.imglib2.RandomAccessibleInterval;
@@ -228,122 +230,141 @@ public class PaintActions2D
 		}
 	}
 
-	public MouseDragFX dragPaintLabel( final String name, final Supplier< Long > id, final Predicate< MouseEvent > eventFilter )
+	public InstallAndRemove< Node > mouseHandler(
+			final Supplier< Long > id,
+			final Predicate< MouseEvent > filter )
 	{
-		return new PaintDrag( name, eventFilter, true, this, id );
+
+		final PaintMouseEventHandler handler = new PaintMouseEventHandler( id, filter );
+		final InstallAndRemove< Node > iar = new InstallAndRemove< Node >()
+		{
+
+			@Override
+			public void installInto( final Node t )
+			{
+				t.addEventHandler( MouseEvent.ANY, handler );
+			}
+
+			@Override
+			public void removeFrom( final Node t )
+			{
+				t.removeEventHandler( MouseEvent.ANY, handler );
+			}
+		};
+		return iar;
 	}
 
-	public EventFX< MouseEvent > clickPaintLabel( final String name, final Supplier< Long > id, final Predicate< MouseEvent > eventFilter )
+	private class PaintMouseEventHandler implements EventHandler< MouseEvent >
 	{
-		return EventFX.MOUSE_PRESSED( name, e -> new PaintClick( id ).paint( e.getX(), e.getY() ), eventFilter );
-	}
-
-	private class PaintClick
-	{
-		private final PaintEventHandler handler = new PaintEventHandler();
 
 		private final Supplier< Long > id;
 
-		public PaintClick( final Supplier< Long > id )
+		private final Predicate< MouseEvent > filter;
+
+		private double startX = 0;
+
+		private double startY = 0;
+
+		private boolean isDragging = false;
+
+		private final PaintEventHandler handler = new PaintEventHandler();
+
+		public PaintMouseEventHandler(
+				final Supplier< Long > id,
+				final Predicate< MouseEvent > filter )
 		{
 			super();
 			this.id = id;
-		}
-
-		public void paint( final double x, final double y )
-		{
-			try
-			{
-				handler.prepareForPainting( id.get() );
-				handler.paint( x, y );
-				handler.applyMask();
-			}
-			catch ( final MaskInUse e )
-			{
-				LOG.error( "Already painting into mask -- no action taken" );
-			}
-		}
-
-	}
-
-	private class PaintDrag extends MouseDragFX
-	{
-
-		PaintEventHandler handler = new PaintEventHandler();
-
-		private final Supplier< Long > id;
-
-		public PaintDrag(
-				final String name,
-				final Predicate< MouseEvent > eventFilter,
-				final boolean consume,
-				final Object transformLock,
-				final Supplier< Long > id )
-		{
-			super( name, eventFilter, consume, transformLock, false );
-			this.id = id;
+			this.filter = filter;
 		}
 
 		@Override
-		public void initDrag( final MouseEvent event )
+		public void handle( final MouseEvent event )
 		{
-			LOG.debug( "Init drag for {}", this.getClass().getSimpleName() );
-			event.consume();
-			try
-			{
-				handler.prepareForPainting( id.get() );
-			}
-			catch ( final MaskInUse e )
-			{
-				LOG.info( "{} -- will not paint.", e.getMessage() );
-				return;
-			}
-			paintQueue.submit( () -> handler.paint( event.getX(), event.getY() ) );
-		}
 
-		@Override
-		public void drag( final MouseEvent event )
-		{
-			// TODO we assume that no changes to current source or viewer/global
-			// transform can happen during this drag.
+			final EventType< ? extends MouseEvent > et = event.getEventType();
 			final double x = event.getX();
 			final double y = event.getY();
 
-			if ( x != startX || y != startY )
+			if ( isDragging && MouseEvent.MOUSE_RELEASED.equals( et ) )
 			{
-				final double[] p1 = new double[] { startX, startY };
+				if ( isDragging )
+				{
+					paintQueue.submit( handler::applyMask );
+				}
+				isDragging = false;
+				return;
+			}
 
-//			LOG.warn( "Drag: paint at screen=({},{}) / start=({},{})", x, y, startX, startY );
-
-				final double[] d = new double[] { x, y };
-
-				LinAlgHelpers.subtract( d, p1, d );
-
-				final double l = LinAlgHelpers.length( d );
-				LinAlgHelpers.normalize( d );
-
-				LOG.debug( "Number of paintings triggered {}", l + 1 );
+			else if ( !filter.test( event ) )
+			{
+				return;
+			}
+			else if ( MouseEvent.DRAG_DETECTED.equals( et ) )
+			{
+				event.consume();
+				try
+				{
+					handler.prepareForPainting( id.get() );
+				}
+				catch ( final MaskInUse e )
+				{
+					LOG.info( "{} -- will not paint.", e.getMessage() );
+					return;
+				}
+				isDragging = true;
+				startX = event.getX();
+				startY = event.getY();
+			}
+			else if ( MouseEvent.MOUSE_PRESSED.equals( et ) )
+			{
+				event.consume();
+				try
+				{
+					handler.prepareForPainting( id.get() );
+				}
+				catch ( final MaskInUse e )
+				{
+					LOG.info( "{} -- will not paint.", e.getMessage() );
+					return;
+				}
 				paintQueue.submit( () -> {
-
-					final long t0 = System.currentTimeMillis();
-					for ( int i = 0; i < l; ++i )
-					{
-						handler.paint( p1[ 0 ], p1[ 1 ] );
-						LinAlgHelpers.add( p1, d, p1 );
-					}
 					handler.paint( x, y );
-					final long t1 = System.currentTimeMillis();
-					LOG.debug( "Painting {} times with radius {} took a total of {}ms", l + 1, brushRadius.get(), t1 - t0 );
+					handler.applyMask();
+					return null;
 				} );
 			}
-			startX = x;
-			startY = y;
-		}
+			else if ( ( MouseEvent.MOUSE_DRAGGED.equals( et ) || MouseEvent.MOUSE_MOVED.equals( et ) ) && isDragging )
+			{
+				if ( x != startX || y != startY )
+				{
+					final double[] p1 = new double[] { startX, startY };
 
-		@Override
-		public void endDrag( final MouseEvent event )
-		{
-			paintQueue.submit( () -> handler.applyMask() );
+					final double[] d = new double[] { x, y };
+
+					LinAlgHelpers.subtract( d, p1, d );
+
+					final double l = LinAlgHelpers.length( d );
+					LinAlgHelpers.normalize( d );
+
+					LOG.debug( "Number of paintings triggered {}", l + 1 );
+					paintQueue.submit( () -> {
+
+						final long t0 = System.currentTimeMillis();
+						for ( int i = 0; i < l; ++i )
+						{
+							handler.paint( p1[ 0 ], p1[ 1 ] );
+							LinAlgHelpers.add( p1, d, p1 );
+						}
+						handler.paint( x, y );
+						final long t1 = System.currentTimeMillis();
+						LOG.debug( "Painting {} times with radius {} took a total of {}ms", l + 1, brushRadius.get(), t1 - t0 );
+					} );
+				}
+				startX = x;
+				startY = y;
+				event.consume();
+			}
 		}
 
 	}

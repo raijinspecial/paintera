@@ -147,15 +147,10 @@ public class Paint implements ToOnEnterOnExit
 					}, event -> keyTracker.areOnlyTheseKeysDown( KeyCode.F, KeyCode.SHIFT ) ) );
 					iars.add( EventFX.KEY_RELEASED( "show fill overlay", event -> fillOverlay.setVisible( false ), event -> event.getCode().equals( KeyCode.F ) && keyTracker.areOnlyTheseKeysDown( KeyCode.SHIFT ) || event.isShiftDown() && keyTracker.areOnlyTheseKeysDown( KeyCode.F ) ) );
 
-					// click paint
-					iars.add( paint2D.clickPaintLabel( "paint 2D", paintSelection::get, event -> event.isPrimaryButtonDown() && keyTracker.areOnlyTheseKeysDown( KeyCode.SPACE ) && this.paint2D.get() ) );
-					iars.add( paint2D.clickPaintLabel( "erase canvas click 2D", () -> Label.TRANSPARENT, event -> event.isSecondaryButtonDown() && keyTracker.areOnlyTheseKeysDown( KeyCode.SPACE ) && this.paint2D.get() ) );
-					iars.add( paint2D.clickPaintLabel( "to background 2D", () -> Label.BACKGROUND, event -> event.isSecondaryButtonDown() && keyTracker.areOnlyTheseKeysDown( KeyCode.SPACE, KeyCode.SHIFT ) && this.paint2D.get() ) );
-
-					// drag paint
-					iars.add( paint2D.dragPaintLabel( "paint 2D", paintSelection::get, event -> event.isPrimaryButtonDown() && keyTracker.areOnlyTheseKeysDown( KeyCode.SPACE ) && this.paint2D.get() ) );
-					iars.add( paint2D.dragPaintLabel( "erase canvas 2D", () -> Label.TRANSPARENT, event -> event.isSecondaryButtonDown() && keyTracker.areOnlyTheseKeysDown( KeyCode.SPACE ) && this.paint2D.get() ) );
-					iars.add( paint2D.dragPaintLabel( "to background 2D", () -> Label.BACKGROUND, event -> event.isSecondaryButtonDown() && keyTracker.areOnlyTheseKeysDown( KeyCode.SPACE, KeyCode.SHIFT ) && this.paint2D.get() ) );
+					// paint handlers
+					iars.add( paint2D.mouseHandler( paintSelection::get, event -> event.isPrimaryButtonDown() && keyTracker.areOnlyTheseKeysDown( KeyCode.SPACE ) && this.paint2D.get() ) );
+					iars.add( paint2D.mouseHandler( () -> Label.TRANSPARENT, event -> event.isSecondaryButtonDown() && keyTracker.areOnlyTheseKeysDown( KeyCode.SPACE ) && this.paint2D.get() ) );
+					iars.add( paint2D.mouseHandler( () -> Label.BACKGROUND, event -> event.isSecondaryButtonDown() && keyTracker.areOnlyTheseKeysDown( KeyCode.SPACE, KeyCode.SHIFT ) && this.paint2D.get() ) );
 
 					// advanced paint stuff
 					iars.add( EventFX.MOUSE_PRESSED( "fill", event -> fill.fillAt( event.getX(), event.getY(), paintSelection::get ), event -> event.isPrimaryButtonDown() && keyTracker.areOnlyTheseKeysDown( KeyCode.SHIFT, KeyCode.F ) ) );
