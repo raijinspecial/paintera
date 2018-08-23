@@ -31,8 +31,8 @@ import javafx.scene.control.Tooltip;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
-import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
+import net.imglib2.RealInterval;
 import org.janelia.saalfeldlab.fx.Labels;
 import org.janelia.saalfeldlab.fx.TitledPanes;
 import org.janelia.saalfeldlab.fx.undo.UndoFromEvents;
@@ -43,7 +43,7 @@ import org.janelia.saalfeldlab.paintera.control.assignment.action.Detach;
 import org.janelia.saalfeldlab.paintera.control.assignment.action.Merge;
 import org.janelia.saalfeldlab.paintera.control.selection.SelectedIds;
 import org.janelia.saalfeldlab.paintera.control.selection.SelectedSegments;
-import org.janelia.saalfeldlab.paintera.control.undo.HasHistory;
+import org.janelia.saalfeldlab.paintera.data.mask.MaskedSource;
 import org.janelia.saalfeldlab.paintera.meshes.ManagedMeshSettings;
 import org.janelia.saalfeldlab.paintera.meshes.MeshInfos;
 import org.janelia.saalfeldlab.paintera.meshes.MeshManager;
@@ -52,6 +52,7 @@ import org.janelia.saalfeldlab.paintera.state.SourceInfo;
 import org.janelia.saalfeldlab.paintera.state.SourceState;
 import org.janelia.saalfeldlab.paintera.ui.BindUnbindAndNodeSupplier;
 import org.janelia.saalfeldlab.paintera.ui.CloseButton;
+import org.janelia.saalfeldlab.paintera.ui.source.MaskedSourcePane;
 import org.janelia.saalfeldlab.paintera.ui.source.composite.CompositePane;
 import org.janelia.saalfeldlab.paintera.ui.source.converter.ConverterPane;
 import org.janelia.saalfeldlab.paintera.ui.source.mesh.MeshPane;
@@ -81,7 +82,8 @@ public class StatePane implements BindUnbindAndNodeSupplier
 			final SourceState<?, ?> state,
 			final SourceInfo sourceInfo,
 			final Consumer<Source<?>> remove,
-			final ObservableDoubleValue width)
+			final ObservableDoubleValue width,
+			Consumer<RealInterval> centerAt)
 	{
 		super();
 		this.state = state;
@@ -97,6 +99,9 @@ public class StatePane implements BindUnbindAndNodeSupplier
 					: BindUnbindAndNodeSupplier.empty(),
 				state instanceof LabelSourceState<?, ?>
 					? assignmentPane((LabelSourceState<?,?>) state)
+					: BindUnbindAndNodeSupplier.empty(),
+				state.getDataSource() instanceof MaskedSource<?, ?>
+					? new MaskedSourcePane((MaskedSource<?, ?>) state.getDataSource(), centerAt)
 					: BindUnbindAndNodeSupplier.empty()
 		};
 

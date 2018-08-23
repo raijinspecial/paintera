@@ -34,6 +34,7 @@ import javafx.scene.layout.VBox;
 import javafx.scene.paint.Color;
 import javafx.scene.text.Font;
 import net.imglib2.RealPoint;
+import net.imglib2.util.Intervals;
 import org.janelia.saalfeldlab.fx.ortho.OrthogonalViews;
 import org.janelia.saalfeldlab.fx.ortho.OrthogonalViews.ViewerAndTransforms;
 import org.janelia.saalfeldlab.fx.ui.ResizeOnLeftSide;
@@ -42,6 +43,7 @@ import org.janelia.saalfeldlab.paintera.config.CrosshairConfigNode;
 import org.janelia.saalfeldlab.paintera.config.NavigationConfigNode;
 import org.janelia.saalfeldlab.paintera.config.OrthoSliceConfigNode;
 import org.janelia.saalfeldlab.paintera.config.Viewer3DConfigNode;
+import org.janelia.saalfeldlab.paintera.control.FitToInterval;
 import org.janelia.saalfeldlab.paintera.control.navigation.CoordinateDisplayListener;
 import org.janelia.saalfeldlab.paintera.state.SourceInfo;
 import org.janelia.saalfeldlab.paintera.ui.Crosshair;
@@ -199,10 +201,12 @@ public class BorderPaneWithStatusBars
 			LOG.warn("Unable to remove source: {}", e.getMessage());
 		};
 
+		final FitToInterval fti = new FitToInterval(center.manager(), center.orthogonalViews().topLeft().viewer().widthProperty()::get);
 		final SourceTabs sourceTabs = new SourceTabs(
 				center.sourceInfo().currentSourceIndexProperty(),
 				MakeUnchecked.onException(center.sourceInfo()::removeSource, onRemoveException),
-				center.sourceInfo()
+				center.sourceInfo(),
+				interval -> fti.fit(Intervals.largestContainedInterval(interval))
 		);
 
 		final TitledPane sourcesContents = new TitledPane("sources", sourceTabs.get());

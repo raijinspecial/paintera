@@ -30,6 +30,7 @@ import javafx.beans.binding.Bindings;
 import javafx.beans.binding.BooleanBinding;
 import javafx.beans.property.BooleanProperty;
 import javafx.beans.property.IntegerProperty;
+import javafx.beans.property.ReadOnlyStringProperty;
 import javafx.beans.property.SimpleBooleanProperty;
 import javafx.beans.property.SimpleIntegerProperty;
 import javafx.beans.property.SimpleStringProperty;
@@ -143,6 +144,10 @@ public class MaskedSource<D extends Type<D>, T extends Type<T>> implements DataS
 
 	private final List<Runnable> canvasClearedListeners = new ArrayList<>();
 
+	private final List<Runnable> maskAppliedListeners = new ArrayList<>();
+
+	private final BooleanProperty showCanvasOverBackground = new SimpleBooleanProperty(this, "show canvas", true);
+
 	private final ObservableBooleanValue canBePersited = Bindings.createBooleanBinding(
 			() -> isMaskNotDeployed.get() && isNotPersisting.get() && noMasksCurrentlyApplied.get(),
 			isNotPersisting,
@@ -228,6 +233,21 @@ public class MaskedSource<D extends Type<D>, T extends Type<T>> implements DataS
 
 		setMasksConstant();
 
+	}
+
+	public BooleanProperty showCanvasOverBackgroundProperty()
+	{
+		return showCanvasOverBackground;
+	}
+
+	public int[] blockSizeCopy(int level)
+	{
+		return this.blockSizes[level].clone();
+	}
+
+	public CellGrid getCellGrid(int level)
+	{
+		return getCellGrid(0, level);
 	}
 
 	public RandomAccessibleInterval<UnsignedLongType> generateMask(final int t, final int level, final
@@ -357,10 +377,11 @@ public class MaskedSource<D extends Type<D>, T extends Type<T>> implements DataS
 						maskInfo.value.getIntegerLong(),
 						key -> new TLongHashSet()
 				                                                          ).addAll(affectedBlocks);
-				LOG.warn("Added affected block: {}", affectedBlocksByLabel[maskInfo.level]);
+				LOG.debug("Added affected block: {}", affectedBlocksByLabel[maskInfo.level]);
 				this.affectedBlocks.addAll(paintedBlocksAtHighestResolution);
 
 				this.maskApplyCount.set(this.maskApplyCount.get() + 1);
+				this.maskAppliedListeners.forEach(Runnable::run);
 
 				propagationExecutor.submit(() -> {
 					propagateMask(
@@ -501,6 +522,20 @@ public class MaskedSource<D extends Type<D>, T extends Type<T>> implements DataS
 		}
 	}
 
+	public void forgetCanvases() throws CannotClearCanvas
+	{
+		synchronized (this)
+		{
+			if (this.isPersisting.get())
+			{
+				throw new CannotClearCanvas("Currently persisting canvas -- try again later.");
+			}
+			this.masks.clear();
+			this.isMaskDeployed.set(false);
+			clearCanvases();
+		}
+	}
+
 	public void persistCanvas() throws CannotPersist
 	{
 		synchronized (this)
@@ -555,6 +590,12 @@ public class MaskedSource<D extends Type<D>, T extends Type<T>> implements DataS
 	@Override
 	public RandomAccessibleInterval<T> getSource(final int t, final int level)
 	{
+		if (!this.showCanvasOverBackground.get() || this.affectedBlocks.size() == 0 && this.isMaskNotDeployed.get())
+		{
+			LOG.debug("Hide canvas or no mask/canvas data present -- delegate to underlying source");
+			return this.source.getSource(t, level);
+		}
+
 		final RandomAccessibleInterval<T>                                                   source   = this.source
 				.getSource(
 				t,
@@ -619,6 +660,13 @@ public class MaskedSource<D extends Type<D>, T extends Type<T>> implements DataS
 	@Override
 	public RandomAccessibleInterval<D> getDataSource(final int t, final int level)
 	{
+
+		if (!this.showCanvasOverBackground.get() || this.affectedBlocks.size() == 0 && this.isMaskNotDeployed.get())
+		{
+			LOG.debug("Hide canvas or no mask/canvas data present -- delegate to underlying source");
+			return this.source.getDataSource(t, level);
+		}
+
 		final RandomAccessibleInterval<D>                                   source   = this.source.getDataSource(
 				t,
 				level
@@ -1277,6 +1325,11 @@ public class MaskedSource<D extends Type<D>, T extends Type<T>> implements DataS
 		return this.source;
 	}
 
+	public ReadOnlyStringProperty currentCanvasDirectoryProperty()
+	{
+		return this.cacheDirectory;
+	}
+
 	public String currentCanvasDirectory()
 	{
 		return this.cacheDirectory.get();
@@ -1300,6 +1353,11 @@ public class MaskedSource<D extends Type<D>, T extends Type<T>> implements DataS
 	public void addOnCanvasClearedListener(final Runnable listener)
 	{
 		this.canvasClearedListeners.add(listener);
+	}
+
+	public void addOnMaskAppliedListener(final Runnable listener)
+	{
+		this.maskAppliedListeners.add(listener);
 	}
 
 	Map<Long, long[]>[] getAffectedBlocksById()

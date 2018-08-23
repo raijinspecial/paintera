@@ -24,6 +24,7 @@ import javafx.scene.control.ScrollPane;
 import javafx.scene.control.ScrollPane.ScrollBarPolicy;
 import javafx.scene.layout.VBox;
 import javafx.stage.Modality;
+import net.imglib2.RealInterval;
 import org.janelia.saalfeldlab.fx.util.InvokeOnJavaFXApplicationThread;
 import org.janelia.saalfeldlab.paintera.state.SourceInfo;
 import org.janelia.saalfeldlab.paintera.ui.source.state.StatePane;
@@ -67,7 +68,8 @@ public class SourceTabs implements Supplier<Node>
 	public SourceTabs(
 			final ObservableIntegerValue currentSourceIndex,
 			final Consumer<Source<?>> remove,
-			final SourceInfo info)
+			final SourceInfo info,
+			final Consumer<RealInterval> centerAt)
 	{
 		LOG.debug("Constructiong {}", SourceTabs.class.getName());
 		this.info = info;
@@ -80,7 +82,8 @@ public class SourceTabs implements Supplier<Node>
 							info.getState(src),
 							info,
 							s -> removeDialog(remove, s),
-							width
+							width,
+							centerAt
 					)
 			                                                                                       )).collect
 					(Collectors.toList());
