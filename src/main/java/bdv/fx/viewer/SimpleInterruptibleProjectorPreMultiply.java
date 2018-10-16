@@ -7,6 +7,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import com.sun.javafx.image.PixelUtils;
+import net.imglib2.Interval;
 import net.imglib2.RandomAccess;
 import net.imglib2.RandomAccessible;
 import net.imglib2.RandomAccessibleInterval;
@@ -15,6 +16,7 @@ import net.imglib2.type.numeric.ARGBType;
 import net.imglib2.ui.AbstractInterruptibleProjector;
 import net.imglib2.ui.InterruptibleProjector;
 import net.imglib2.ui.util.StopWatch;
+import net.imglib2.view.Views;
 
 /**
  * An {@link InterruptibleProjector}, that renders a target 2D {@link RandomAccessibleInterval} by copying values from a
@@ -47,6 +49,8 @@ public class SimpleInterruptibleProjectorPreMultiply<A> extends AbstractInterrup
 	 */
 	protected long lastFrameRenderNanoTime;
 
+	private final Interval renderInterval;
+
 	/**
 	 * Create new projector with the given source and a converter from source to target pixel type.
 	 *
@@ -63,9 +67,10 @@ public class SimpleInterruptibleProjectorPreMultiply<A> extends AbstractInterrup
 			final RandomAccessible<A> source,
 			final Converter<? super A, ARGBType> converter,
 			final RandomAccessibleInterval<ARGBType> target,
-			final int numThreads)
+			final int numThreads,
+			final Interval renderInterval)
 	{
-		this(source, converter, target, numThreads, null);
+		this(source, converter, target, numThreads, null, renderInterval);
 	}
 
 	public SimpleInterruptibleProjectorPreMultiply(
@@ -73,13 +78,15 @@ public class SimpleInterruptibleProjectorPreMultiply<A> extends AbstractInterrup
 			final Converter<? super A, ARGBType> converter,
 			final RandomAccessibleInterval<ARGBType> target,
 			final int numThreads,
-			final ExecutorService executorService)
+			final ExecutorService executorService,
+			final Interval renderInterval)
 	{
-		super(source.numDimensions(), converter, target);
+		super(source.numDimensions(), converter, Views.interval(target, renderInterval));
 		this.source = source;
 		this.numThreads = numThreads;
 		this.executorService = executorService;
 		lastFrameRenderNanoTime = -1;
+		this.renderInterval = renderInterval;
 	}
 
 	/**

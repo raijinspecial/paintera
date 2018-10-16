@@ -44,6 +44,8 @@ import bdv.viewer.render.Prefetcher;
 import bdv.viewer.render.VolatileHierarchyProjector;
 import bdv.viewer.render.VolatileProjector;
 import net.imglib2.Dimensions;
+import net.imglib2.FinalInterval;
+import net.imglib2.Interval;
 import net.imglib2.RandomAccess;
 import net.imglib2.RandomAccessible;
 import net.imglib2.RandomAccessibleInterval;
@@ -60,6 +62,9 @@ import net.imglib2.img.basictypeaccess.array.IntArray;
 import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.realtransform.RealViews;
 import net.imglib2.type.numeric.ARGBType;
+import net.imglib2.type.numeric.integer.ByteType;
+import net.imglib2.util.Intervals;
+import net.imglib2.view.Views;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import tmp.bdv.img.cache.VolatileCachedCellImg;
@@ -142,7 +147,7 @@ public class MultiResolutionRendererGeneric<T>
 	 * Storage for mask images of {@link VolatileHierarchyProjector}. One array per visible source. (First) index is
 	 * index in list of visible sources.
 	 */
-	private byte[][] renderMaskArrays;
+	private ArrayImg<ByteType, ?>[] renderMaskArrays;
 
 	/**
 	 * Used to render the image for display. Three images per screen resolution if double buffering is enabled. First
@@ -211,7 +216,7 @@ public class MultiResolutionRendererGeneric<T>
 	/**
 	 * TODO
 	 */
-	private final AccumulateProjectorFactory<ARGBType> accumulateProjectorFactory;
+	private final bdv.viewer.render.AccumulateProjectorFactory<ARGBType> accumulateProjectorFactory;
 
 	/**
 	 * Controls IO budgeting and fetcher queue.
@@ -224,7 +229,6 @@ public class MultiResolutionRendererGeneric<T>
 	private final boolean useVolatileIfAvailable;
 
 	/**
-	 * Whether a repaint was {@link #requestRepaint() requested}. This will cause {@link
 	 * CacheControl#prepareNextFrame()}.
 	 */
 	private boolean newFrameRequest;
@@ -245,6 +249,8 @@ public class MultiResolutionRendererGeneric<T>
 	private final ToIntFunction<T> height;
 
 	private final ImageGenerator<T> makeImage;
+
+	private Interval renderInterval = null;
 
 	/**
 	 * @param display
@@ -370,6 +376,7 @@ public class MultiResolutionRendererGeneric<T>
 				screenScaleTransforms[i] = scale;
 			}
 
+			renderInterval = null;
 			return true;
 		}
 		return false;
@@ -401,13 +408,15 @@ public class MultiResolutionRendererGeneric<T>
 
 	private boolean checkRenewMaskArrays(final int numVisibleSources)
 	{
-		final int size = width.applyAsInt(screenImages.get(0).get(0)) * height.applyAsInt(screenImages.get(0).get(0));
+		final int w = width.applyAsInt(screenImages.get(0).get(0));
+		final int h = height.applyAsInt(screenImages.get(0).get(0));
+		final int size = w * h;
 		if (numVisibleSources != renderMaskArrays.length ||
-				numVisibleSources != 0 && renderMaskArrays[0].length < size)
+				numVisibleSources != 0 && renderMaskArrays[0].size() < size)
 		{
-			renderMaskArrays = new byte[numVisibleSources][];
+			renderMaskArrays = new ArrayImg[numVisibleSources];
 			for (int j = 0; j < numVisibleSources; ++j)
-				renderMaskArrays[j] = new byte[size];
+				renderMaskArrays[j] = ArrayImgs.bytes(w, h);
 			return true;
 		}
 		return false;
@@ -519,7 +528,7 @@ public class MultiResolutionRendererGeneric<T>
 				}
 
 				if (currentScreenScaleIndex > 0)
-					requestRepaint(currentScreenScaleIndex - 1);
+					requestRepaint(currentScreenScaleIndex - 1, this.renderInterval);
 				else if (!p.isValid())
 				{
 					try
@@ -530,9 +539,14 @@ public class MultiResolutionRendererGeneric<T>
 						// restore interrupted state
 						Thread.currentThread().interrupt();
 					}
-					requestRepaint(currentScreenScaleIndex);
+					requestRepaint(currentScreenScaleIndex, this.renderInterval);
 				}
+
+				if (currentScreenScaleIndex == 0)
+					this.renderInterval = null;
 			}
+			else
+				this.renderInterval = null;
 		}
 
 		return success;
@@ -541,22 +555,27 @@ public class MultiResolutionRendererGeneric<T>
 	/**
 	 * Request a repaint of the display from the painter thread, with maximum screen scale index and mipmap level.
 	 */
-	public void requestRepaint()
+	public void requestRepaint(final Interval interval)
 	{
 		newFrameRequest = true;
-		requestRepaint(maxScreenScaleIndex);
+		requestRepaint(maxScreenScaleIndex, interval);
 	}
 
 	/**
 	 * Request a repaint of the display from the painter thread. The painter thread will trigger a {@link #paint} as
 	 * soon as possible (that is, immediately or after the currently running {@link #paint} has completed).
 	 */
-	public synchronized void requestRepaint(final int screenScaleIndex)
+	public synchronized void requestRepaint(final int screenScaleIndex, final Interval interval)
 	{
 		if (renderingMayBeCancelled && projector != null)
 			projector.cancel();
 		if (screenScaleIndex > requestedScreenScaleIndex)
 			requestedScreenScaleIndex = screenScaleIndex;
+		if (interval != null)
+			this.renderInterval =
+					this.renderInterval == null
+							? new FinalInterval(interval)
+							: Intervals.union(this.renderInterval, interval);
 		painterThread.requestRepaint();
 	}
 
@@ -594,6 +613,7 @@ public class MultiResolutionRendererGeneric<T>
 		 */
 		//		CacheIoTiming.getIoTimeBudget().clear(); // clear time budget such that prefetching doesn't wait for
 		// loading blocks.
+		final Interval interval = intersect(renderInterval, screenImage);
 		VolatileProjector projector;
 		if (sacs.isEmpty())
 			projector = new EmptyProjector<>(screenImage);
@@ -610,8 +630,8 @@ public class MultiResolutionRendererGeneric<T>
 					screenImage,
 					renderMaskArrays[0],
 					interpolation,
-					true
-			                                       );
+					true,
+					interval);
 		}
 		else
 		{
@@ -623,7 +643,7 @@ public class MultiResolutionRendererGeneric<T>
 			for (final SourceAndConverter<?> sac : sacs)
 			{
 				final ArrayImg<ARGBType, IntArray> renderImage = renderImages[currentScreenScaleIndex][j];
-				final byte[]                       maskArray   = renderMaskArrays[j];
+				final ArrayImg<ByteType, ?> maskArray   = renderMaskArrays[j];
 				++j;
 				final Interpolation interpolation = interpolationForSource.apply(sac.getSpimSource());
 				final VolatileProjector p = createSingleSourceProjector(
@@ -634,20 +654,20 @@ public class MultiResolutionRendererGeneric<T>
 						renderImage,
 						maskArray,
 						interpolation,
-						false
-				                                                       );
+						false,
+						interval);
 				sourceProjectors.add(p);
 				sources.add(sac.getSpimSource());
 				sourceImages.add(renderImage);
 			}
+			LOG.warn("Creating projector for interval ({} {})", Intervals.minAsLongArray(interval), Intervals.maxAsLongArray(interval));
 			projector = accumulateProjectorFactory.createAccumulateProjector(
 					sourceProjectors,
 					sources,
 					sourceImages,
-					screenImage,
+					Views.interval(screenImage, interval),
 					numRenderingThreads,
-					renderingExecutorService
-			                                                                );
+					renderingExecutorService);
 		}
 		previousTimepoint = timepoint;
 		currentProjectorTransform.set(viewerTransform);
@@ -665,9 +685,10 @@ public class MultiResolutionRendererGeneric<T>
 				final Converter<? super A, ARGBType> converter,
 				final RandomAccessibleInterval<ARGBType> target,
 				final int numThreads,
-				final ExecutorService executorService)
+				final ExecutorService executorService,
+				final Interval interval)
 		{
-			super(source, converter, target, numThreads, executorService);
+			super(source, converter, target, numThreads, executorService, interval);
 		}
 
 		@Override
@@ -691,9 +712,10 @@ public class MultiResolutionRendererGeneric<T>
 			final AffineTransform3D viewerTransform,
 			final int screenScaleIndex,
 			final ArrayImg<ARGBType, ? extends IntAccess> screenImage,
-			final byte[] maskArray,
+			final RandomAccessibleInterval<ByteType> maskArray,
 			final Interpolation interpolation,
-			final boolean preMultiply)
+			final boolean preMultiply,
+			final Interval interval)
 	{
 		if (useVolatileIfAvailable)
 			if (source.asVolatile() != null)
@@ -711,7 +733,8 @@ public class MultiResolutionRendererGeneric<T>
 						screenImage,
 						maskArray,
 						interpolation,
-						preMultiply
+						preMultiply,
+						interval
 				                                          );
 			}
 			else if (source.getSpimSource().getType() instanceof Volatile)
@@ -731,7 +754,8 @@ public class MultiResolutionRendererGeneric<T>
 						screenImage,
 						maskArray,
 						interpolation,
-						preMultiply
+						preMultiply,
+						interval
 				                                          );
 			}
 
@@ -750,7 +774,8 @@ public class MultiResolutionRendererGeneric<T>
 						null,
 						interpolation
 				                    ),
-				source.getConverter(), screenImage, numRenderingThreads, renderingExecutorService
+				source.getConverter(), screenImage, numRenderingThreads, renderingExecutorService,
+				interval
 		);
 	}
 
@@ -760,9 +785,10 @@ public class MultiResolutionRendererGeneric<T>
 			final int screenScaleIndex,
 			final AffineTransform3D viewerTransform,
 			final ArrayImg<ARGBType, ? extends IntAccess> screenImage,
-			final byte[] maskArray,
+			final RandomAccessibleInterval<ByteType> maskArray,
 			final Interpolation interpolation,
-			final boolean preMultiply)
+			final boolean preMultiply,
+			final Interval interval)
 	{
 		LOG.debug(
 				"Creating single source volatile projector for source={} (name={})",
@@ -830,7 +856,7 @@ public class MultiResolutionRendererGeneric<T>
 					renderingExecutorService
 			);
 		else
-			return new VolatileHierarchyProjector<>(
+			return new VolatileHierarchyProjectorNoPreMultiply<>(
 					renderList,
 					source.getConverter(),
 					screenImage,
@@ -935,7 +961,7 @@ public class MultiResolutionRendererGeneric<T>
 		if (renderingMayBeCancelled && projector != null)
 			projector.cancel();
 		renderImages = new ArrayImg[screenScales.length][0];
-		renderMaskArrays = new byte[0][];
+		renderMaskArrays = new ArrayImg[screenScales.length];
 		screenImages = new ArrayList<>();
 		bufferedImages = new ArrayList<>();
 		for (int i = 0; i < screenScales.length; ++i)
@@ -946,6 +972,22 @@ public class MultiResolutionRendererGeneric<T>
 		screenScaleTransforms = new AffineTransform3D[screenScales.length];
 		maxScreenScaleIndex = screenScales.length - 1;
 		requestedScreenScaleIndex = maxScreenScaleIndex;
+		renderInterval = null;
+	}
+
+	private Interval intersect(final Interval i1, final Interval i2)
+	{
+		if (i1 == null)
+			return i2;
+		if (i2 == null)
+			return i1;
+		LOG.warn(
+				"Intersecting ({} {}) and ({} {})",
+				Intervals.minAsLongArray(i1),
+				Intervals.maxAsLongArray(i1),
+				Intervals.minAsLongArray(i2),
+				Intervals.maxAsLongArray(i2));
+		return Intervals.intersect(i1, i2);
 	}
 
 }

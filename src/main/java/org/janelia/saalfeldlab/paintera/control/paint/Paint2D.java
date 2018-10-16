@@ -63,7 +63,7 @@ public class Paint2D
 				globalToViewerTransform,
 				2
 		                                                                                      );
-		LOG.debug("Got coresspanding viewer axis in label coordinate system: {}", viewerAxisInLabelCoordinates);
+		LOG.debug("Got corresponding viewer axis in label coordinate system: {}", viewerAxisInLabelCoordinates);
 
 		if (viewerAxisInLabelCoordinates < 0)
 		{

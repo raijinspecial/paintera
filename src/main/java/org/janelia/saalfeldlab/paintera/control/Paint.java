@@ -20,6 +20,7 @@ import javafx.beans.property.SimpleBooleanProperty;
 import javafx.beans.property.SimpleDoubleProperty;
 import javafx.scene.Node;
 import javafx.scene.input.KeyCode;
+import net.imglib2.Interval;
 import net.imglib2.type.label.Label;
 import org.janelia.saalfeldlab.fx.event.EventFX;
 import org.janelia.saalfeldlab.fx.event.InstallAndRemove;
@@ -60,7 +61,9 @@ public class Paint implements ToOnEnterOnExit
 
 	private final SimpleDoubleProperty brushDepth = new SimpleDoubleProperty(1.0);
 
-	private final Runnable requestRepaint;
+	private final Consumer<Interval> requestRepaint;
+
+	private final Runnable requestRepaintAll;
 
 	private final BooleanProperty paint3D = new SimpleBooleanProperty(false);
 
@@ -72,7 +75,7 @@ public class Paint implements ToOnEnterOnExit
 			final SourceInfo sourceInfo,
 			final KeyTracker keyTracker,
 			final GlobalTransformManager manager,
-			final Runnable requestRepaint,
+			final Consumer<Interval> requestRepaint,
 			final ExecutorService paintQueue)
 	{
 		super();
@@ -80,6 +83,7 @@ public class Paint implements ToOnEnterOnExit
 		this.keyTracker = keyTracker;
 		this.manager = manager;
 		this.requestRepaint = requestRepaint;
+		this.requestRepaintAll = () -> requestRepaint.accept(null);
 		this.paintQueue = paintQueue;
 	}
 
@@ -123,14 +127,14 @@ public class Paint implements ToOnEnterOnExit
 
 					painters.put(t, paint2D);
 
-					final FloodFill   fill   = new FloodFill(t, sourceInfo, requestRepaint);
-					final FloodFill2D fill2D = new FloodFill2D(t, sourceInfo, requestRepaint);
+					final FloodFill   fill   = new FloodFill(t, sourceInfo, requestRepaintAll);
+					final FloodFill2D fill2D = new FloodFill2D(t, sourceInfo, requestRepaintAll);
 					fill2D.fillDepthProperty().bindBidirectional(this.brushDepth);
 					final Fill2DOverlay fill2DOverlay = new Fill2DOverlay(t);
 					fill2DOverlay.brushDepthProperty().bindBidirectional(this.brushDepth);
 					final FillOverlay fillOverlay = new FillOverlay(t);
 
-					final RestrictPainting restrictor = new RestrictPainting(t, sourceInfo, requestRepaint);
+					final RestrictPainting restrictor = new RestrictPainting(t, sourceInfo, requestRepaintAll);
 
 					final List<InstallAndRemove<Node>> iars = new ArrayList<>();
 

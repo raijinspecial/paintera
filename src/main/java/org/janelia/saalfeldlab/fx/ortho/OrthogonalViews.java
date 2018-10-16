@@ -17,6 +17,7 @@ import javafx.event.EventHandler;
 import javafx.event.EventType;
 import javafx.scene.Node;
 import javafx.scene.layout.Pane;
+import net.imglib2.Interval;
 import net.imglib2.realtransform.AffineTransform3D;
 import org.janelia.saalfeldlab.paintera.control.navigation.AffineTransformWithListeners;
 import org.janelia.saalfeldlab.paintera.control.navigation.TransformConcatenator;
@@ -141,6 +142,11 @@ public class OrthogonalViews<BR extends Node>
 		apply.accept(topLeft.viewer);
 		apply.accept(topRight.viewer);
 		apply.accept(bottomLeft.viewer);
+	}
+
+	public void requestRepaint(final Interval interval)
+	{
+		applyToAll(vp -> vp.requestRepaint(interval));
 	}
 
 	public void requestRepaint()

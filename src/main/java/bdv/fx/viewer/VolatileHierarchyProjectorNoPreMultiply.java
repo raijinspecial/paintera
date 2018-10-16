@@ -1,14 +1,5 @@
 package bdv.fx.viewer;
 
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
-import java.util.concurrent.Callable;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
-
 import bdv.viewer.render.VolatileProjector;
 import com.sun.javafx.image.PixelUtils;
 import net.imglib2.Cursor;
@@ -21,7 +12,6 @@ import net.imglib2.Volatile;
 import net.imglib2.cache.iotiming.CacheIoTiming;
 import net.imglib2.cache.iotiming.IoStatistics;
 import net.imglib2.converter.Converter;
-import net.imglib2.img.Img;
 import net.imglib2.img.array.ArrayImgs;
 import net.imglib2.type.numeric.ARGBType;
 import net.imglib2.type.numeric.integer.ByteType;
@@ -29,6 +19,14 @@ import net.imglib2.ui.AbstractInterruptibleProjector;
 import net.imglib2.ui.util.StopWatch;
 import net.imglib2.util.Intervals;
 import net.imglib2.view.Views;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * {@link VolatileProjector} for a hierarchy of {@link Volatile} inputs. After each {@link #map()} call, the projector
@@ -39,7 +37,7 @@ import net.imglib2.view.Views;
  * @author Philipp Hanslovsky
  */
 @SuppressWarnings("restriction")
-public class VolatileHierarchyProjectorPreMultiply<A extends Volatile<?>>
+public class VolatileHierarchyProjectorNoPreMultiply<A extends Volatile<?>>
 		extends AbstractInterruptibleProjector<A, ARGBType> implements VolatileProjector
 {
 	protected final ArrayList<RandomAccessible<A>> sources = new ArrayList<>();
@@ -103,7 +101,7 @@ public class VolatileHierarchyProjectorPreMultiply<A extends Volatile<?>>
 	 */
 	protected final AtomicBoolean interrupted = new AtomicBoolean();
 
-	public VolatileHierarchyProjectorPreMultiply(
+	public VolatileHierarchyProjectorNoPreMultiply(
 			final List<? extends RandomAccessible<A>> sources,
 			final Converter<? super A, ARGBType> converter,
 			final RandomAccessibleInterval<ARGBType> target,
@@ -120,7 +118,7 @@ public class VolatileHierarchyProjectorPreMultiply<A extends Volatile<?>>
 		    );
 	}
 
-	public VolatileHierarchyProjectorPreMultiply(
+	public VolatileHierarchyProjectorNoPreMultiply(
 			final List<? extends RandomAccessible<A>> sources,
 			final Converter<? super A, ARGBType> converter,
 			final RandomAccessibleInterval<ARGBType> target,
@@ -284,7 +282,6 @@ public class VolatileHierarchyProjectorPreMultiply<A extends Volatile<?>>
 								{
 									final ARGBType argb = targetRandomAccess.get();
 									converter.convert(a, argb);
-									argb.set(PixelUtils.NonPretoPre(argb.get()));
 									m.set(iFinal);
 								}
 								else

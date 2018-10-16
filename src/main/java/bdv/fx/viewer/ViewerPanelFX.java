@@ -31,7 +31,6 @@ package bdv.fx.viewer;
 
 import bdv.cache.CacheControl;
 import bdv.viewer.Interpolation;
-import bdv.viewer.RequestRepaint;
 import bdv.viewer.Source;
 import bdv.viewer.SourceAndConverter;
 import bdv.viewer.ViewerOptions;
@@ -45,6 +44,8 @@ import javafx.collections.ListChangeListener;
 import javafx.scene.canvas.GraphicsContext;
 import javafx.scene.input.MouseEvent;
 import javafx.scene.layout.BorderPane;
+import net.imglib2.FinalInterval;
+import net.imglib2.Interval;
 import net.imglib2.Positionable;
 import net.imglib2.RealLocalizable;
 import net.imglib2.RealPoint;
@@ -130,7 +131,6 @@ public class ViewerPanelFX
 
 	/**
 	 * These listeners will be notified about changes to the {@link #viewerTransform}. This is done <em>before</em>
-	 * calling {@link #requestRepaint()} so listeners have the chance to interfere.
 	 */
 	protected final CopyOnWriteArrayList<TransformListener<AffineTransform3D>> transformListeners;
 
@@ -250,7 +250,7 @@ public class ViewerPanelFX
 
 		this.interpolation = interpolation;
 
-		state.sourcesAndConverters.addListener((ListChangeListener<SourceAndConverter<?>>) c -> requestRepaint());
+		state.sourcesAndConverters.addListener((ListChangeListener<SourceAndConverter<?>>) c -> requestRepaint(new FinalInterval((int) getWidth(), (int) getHeight())));
 
 		addEventFilter(MouseEvent.MOUSE_MOVED, event -> {
 			synchronized (isInside)
@@ -282,7 +282,7 @@ public class ViewerPanelFX
 			public void changed(final ObservableValue<? extends Number> observable, final Number oldValue, final
 			Number newValue)
 			{
-				requestRepaint();
+				requestRepaint(new FinalInterval((int) getWidth(), (int) getHeight()));
 				synchronized (display)
 				{
 					display.widthProperty().removeListener(this);
@@ -447,10 +447,15 @@ public class ViewerPanelFX
 	 * Repaint as soon as possible.
 	 */
 	@Override
-	public void requestRepaint()
+	public void requestRepaint(final Interval interval)
 	{
 		if (isVisible())
-			imageRenderer.requestRepaint();
+			imageRenderer.requestRepaint(interval);
+	}
+	@Override
+	public void requestRepaint()
+	{
+		this.requestRepaint(new FinalInterval((int) getWidth(), (int) getHeight()));
 	}
 
 	@Override
@@ -460,7 +465,7 @@ public class ViewerPanelFX
 		state.setViewerTransform(transform);
 		for (final TransformListener<AffineTransform3D> l : transformListeners)
 			l.transformChanged(viewerTransform);
-		requestRepaint();
+		requestRepaint(new FinalInterval((int) getWidth(), (int) getHeight()));
 	}
 
 	/**
@@ -493,7 +498,7 @@ public class ViewerPanelFX
 			final int timepoint = numTimepoints - 1;
 			state.timepoint.set(timepoint);
 		}
-		requestRepaint();
+		requestRepaint(new FinalInterval((int) getWidth(), (int) getHeight()));
 	}
 
 	/**
@@ -548,7 +553,6 @@ public class ViewerPanelFX
 
 	/**
 	 * Add a {@link TransformListener} to notify about viewer transformation changes. Listeners will be notified
-	 * <em>before</em> calling {@link #requestRepaint()} so they have the chance to interfere.
 	 *
 	 * @param listener
 	 * 		the transform listener to add.
@@ -560,7 +564,6 @@ public class ViewerPanelFX
 
 	/**
 	 * Add a {@link TransformListener} to notify about viewer transformation changes. Listeners will be notified
-	 * <em>before</em> calling {@link #requestRepaint()} so they have the chance to interfere.
 	 *
 	 * @param listener
 	 * 		the transform listener to add.

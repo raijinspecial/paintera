@@ -3,16 +3,19 @@ package org.janelia.saalfeldlab.paintera.control.paint;
 import java.lang.invoke.MethodHandles;
 import java.util.Optional;
 import java.util.concurrent.ExecutorService;
+import java.util.function.Consumer;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 
 import bdv.fx.viewer.ViewerPanelFX;
 import bdv.fx.viewer.ViewerState;
+import bdv.util.Affine3DHelpers;
 import bdv.viewer.Source;
 import javafx.beans.property.DoubleProperty;
 import javafx.beans.property.SimpleDoubleProperty;
 import javafx.beans.property.SimpleObjectProperty;
 import javafx.scene.input.MouseEvent;
+import net.imglib2.FinalRealInterval;
 import net.imglib2.Interval;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.realtransform.AffineTransform3D;
@@ -143,7 +146,14 @@ public class PaintActions2D
 					Optional.ofNullable(this.interval.get()).orElse(trackedInterval)
 			                                 ));
 			++this.fillLabel;
-			repaintRequest.run();
+			final double viewerRadius = Affine3DHelpers.extractScale(globalToViewerTransform, 0) * brushRadius.get();
+
+			final Interval viewerInterval = Intervals.smallestContainingInterval(new FinalRealInterval(
+					new double[] {viewerX - viewerRadius, viewerY - viewerRadius},
+					new double[] {viewerX + viewerRadius, viewerY + viewerRadius}
+			));
+			LOG.warn("repaintRequest for viewer interval ({} {})", Intervals.minAsLongArray(viewerInterval), Intervals.maxAsLongArray(viewerInterval));
+			repaintRequest.accept(viewerInterval);
 
 		}
 
@@ -172,7 +182,7 @@ public class PaintActions2D
 
 	private final SimpleDoubleProperty brushDepth = new SimpleDoubleProperty(1.0);
 
-	private final Runnable repaintRequest;
+	private final Consumer<Interval> repaintRequest;
 
 	private final ExecutorService paintQueue;
 
@@ -180,7 +190,7 @@ public class PaintActions2D
 			final ViewerPanelFX viewer,
 			final SourceInfo sourceInfo,
 			final GlobalTransformManager manager,
-			final Runnable repaintRequest,
+			final Consumer<Interval> repaintRequest,
 			final ExecutorService paintQueue)
 	{
 		super();
