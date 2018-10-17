@@ -450,7 +450,7 @@ public class MultiResolutionRendererGeneric<T>
 
 		final boolean createProjector;
 
-		final Interval renderInterval = this.renderInterval;
+		final Interval renderInterval;
 
 		synchronized (this)
 		{
@@ -492,6 +492,16 @@ public class MultiResolutionRendererGeneric<T>
 			{
 				bufferedImage = null;
 				p = projector;
+			}
+
+			final double screenScale = screenScales[currentScreenScaleIndex];
+			if (this.renderInterval == null || screenScale == 1.0)
+				renderInterval = this.renderInterval;
+			else {
+				long[] min = {(long) Math.floor(screenScale * this.renderInterval.min(0)), (long) Math.floor(screenScale * this.renderInterval.min(1))};
+				long[] max = {(long) Math.ceil(screenScale * this.renderInterval.max(0)), (long) Math.ceil(screenScale * this.renderInterval.max(1))};
+				renderInterval = new FinalInterval(min, max);
+				LOG.debug("Set render interval to ({} {})", min, max);
 			}
 
 			requestedScreenScaleIndex = 0;
@@ -573,11 +583,22 @@ public class MultiResolutionRendererGeneric<T>
 			projector.cancel();
 		if (screenScaleIndex > requestedScreenScaleIndex)
 			requestedScreenScaleIndex = screenScaleIndex;
-		if (interval != null)
+		if (interval == null)
+		{
+			LOG.debug("Setting renderInterval to null");
+			this.renderInterval = null;
+		}
+		else {
+			LOG.debug("Setting renderInterval to union with ({} {})", Intervals.minAsLongArray(interval), Intervals.maxAsLongArray(interval));
 			this.renderInterval =
 					this.renderInterval == null
-							? interval == null ? null : new FinalInterval(interval)
-							: interval == null ? null : Intervals.union(this.renderInterval, interval);
+							? new FinalInterval(interval)
+							: Intervals.union(this.renderInterval, interval);
+		}
+		if (this.renderInterval != null)
+		{
+			LOG.debug("Render interval is not null and! ({} {})", Intervals.minAsLongArray(this.renderInterval), Intervals.maxAsLongArray(this.renderInterval));
+		}
 		painterThread.requestRepaint();
 	}
 
