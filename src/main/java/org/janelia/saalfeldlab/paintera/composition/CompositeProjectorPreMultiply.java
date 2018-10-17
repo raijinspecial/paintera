@@ -6,10 +6,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 
+import bdv.fx.viewer.project.AccumulateProjector;
+import bdv.fx.viewer.project.AccumulateProjectorFactory;
+import bdv.fx.viewer.project.VolatileProjector;
 import bdv.viewer.Source;
-import bdv.viewer.render.AccumulateProjector;
-import bdv.viewer.render.AccumulateProjectorFactory;
-import bdv.viewer.render.VolatileProjector;
 import com.sun.javafx.image.PixelUtils;
 import net.imglib2.Cursor;
 import net.imglib2.RandomAccessible;

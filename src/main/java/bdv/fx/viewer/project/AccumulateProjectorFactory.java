@@ -27,11 +27,9 @@
  * POSSIBILITY OF SUCH DAMAGE.
  * #L%
  */
-package bdv.fx.viewer;
+package bdv.fx.viewer.project;
 
 import bdv.viewer.Source;
-import bdv.viewer.render.VolatileProjector;
-import net.imglib2.Interval;
 import net.imglib2.RandomAccessible;
 import net.imglib2.RandomAccessibleInterval;
 
@@ -61,6 +59,5 @@ public interface AccumulateProjectorFactory< A >
 			final ArrayList<? extends RandomAccessible<? extends A>> sourceScreenImages,
 			final RandomAccessibleInterval<A> targetScreenImage,
 			final int numThreads,
-			final ExecutorService executorService,
-			final Interval interval);
+			final ExecutorService executorService);
 }

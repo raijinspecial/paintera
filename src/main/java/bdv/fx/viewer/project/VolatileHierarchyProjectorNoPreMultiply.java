@@ -1,9 +1,8 @@
-package bdv.fx.viewer;
+package bdv.fx.viewer.project;
 
-import bdv.viewer.render.VolatileProjector;
-import com.sun.javafx.image.PixelUtils;
 import net.imglib2.Cursor;
 import net.imglib2.FinalInterval;
+import net.imglib2.Interval;
 import net.imglib2.IterableInterval;
 import net.imglib2.RandomAccess;
 import net.imglib2.RandomAccessible;
@@ -15,11 +14,14 @@ import net.imglib2.converter.Converter;
 import net.imglib2.img.array.ArrayImgs;
 import net.imglib2.type.numeric.ARGBType;
 import net.imglib2.type.numeric.integer.ByteType;
-import net.imglib2.ui.AbstractInterruptibleProjector;
 import net.imglib2.ui.util.StopWatch;
 import net.imglib2.util.Intervals;
 import net.imglib2.view.Views;
+import org.janelia.saalfeldlab.util.IntervalUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
+import java.lang.invoke.MethodHandles;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Callable;
@@ -29,7 +31,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * {@link VolatileProjector} for a hierarchy of {@link Volatile} inputs. After each {@link #map()} call, the projector
+ * {@link VolatileProjector} for a hierarchy of {@link Volatile} inputs. After each {@link #map(Interval)} call, the projector
  * has a {@link #isValid() state} that signalizes whether all projected pixels were perfect.
  *
  * @author Stephan Saalfeld &lt;saalfeld@mpi-cbg.de&gt;
@@ -40,6 +42,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class VolatileHierarchyProjectorNoPreMultiply<A extends Volatile<?>>
 		extends AbstractInterruptibleProjector<A, ARGBType> implements VolatileProjector
 {
+	private final Logger LOG = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
+
 	protected final ArrayList<RandomAccessible<A>> sources = new ArrayList<>();
 
 	protected final RandomAccessibleInterval<ByteType> mask;
@@ -47,31 +51,6 @@ public class VolatileHierarchyProjectorNoPreMultiply<A extends Volatile<?>>
 	protected volatile boolean valid = false;
 
 	protected int numInvalidLevels;
-
-	/**
-	 * Extends of the source to be used for mapping.
-	 */
-	protected final FinalInterval sourceInterval;
-
-	/**
-	 * Target width
-	 */
-	protected final int width;
-
-	/**
-	 * Target height
-	 */
-	protected final int height;
-
-	/**
-	 * Steps for carriage return. Typically -{@link #width}
-	 */
-	protected final int cr;
-
-	/**
-	 * A reference to the target image as an iterable. Used for source-less operations such as clearing its content.
-	 */
-	protected final IterableInterval<ARGBType> iterableTarget;
 
 	/**
 	 * Number of threads to use for rendering
@@ -133,19 +112,6 @@ public class VolatileHierarchyProjectorNoPreMultiply<A extends Volatile<?>>
 
 		this.mask = mask;
 
-		iterableTarget = Views.iterable(target);
-
-		for (int d = 2; d < min.length; ++d)
-			min[d] = max[d] = 0;
-
-		max[0] = target.max(0);
-		max[1] = target.max(1);
-		sourceInterval = new FinalInterval(min, max);
-
-		width = (int) target.dimension(0);
-		height = (int) target.dimension(1);
-		cr = -width;
-
 		this.numThreads = numThreads;
 		this.executorService = executorService;
 
@@ -188,22 +154,22 @@ public class VolatileHierarchyProjectorNoPreMultiply<A extends Volatile<?>>
 	/**
 	 * Clear target pixels that were never written.
 	 */
-	protected void clearUntouchedTargetPixels()
+	protected void clearUntouchedTargetPixels(final RandomAccessibleInterval<ARGBType> target)
 	{
-		final Cursor<ByteType> maskCursor = Views.flatIterable(mask).cursor();
-		for (final ARGBType t : iterableTarget)
+		final Cursor<ByteType> maskCursor = Views.flatIterable(IntervalUtils.intersectIfNecessary(mask, target)).cursor();
+		for (final ARGBType t : Views.flatIterable(target))
 			if (maskCursor.next().get() == Byte.MAX_VALUE)
 				t.setZero();
 	}
 
 	@Override
-	public boolean map()
+	public boolean map(final Interval interval)
 	{
-		return map(true);
+		return map(interval, true);
 	}
 
 	@Override
-	public boolean map(final boolean clearUntouchedTargetPixels)
+	public boolean map(final Interval interval, final boolean clearUntouchedTargetPixels)
 	{
 		interrupted.set(false);
 
@@ -213,6 +179,17 @@ public class VolatileHierarchyProjectorNoPreMultiply<A extends Volatile<?>>
 		final long         startTimeIo           = iostat.getIoNanoTime();
 		final long         startTimeIoCumulative = iostat.getCumulativeIoNanoTime();
 		//		final long startIoBytes = iostat.getIoBytes();
+
+		final RandomAccessibleInterval<ARGBType> target = IntervalUtils.intersectIfNecessary(this.target, interval);
+		final RandomAccessibleInterval<ByteType> mask = IntervalUtils.intersectIfNecessary(this.mask, target);
+		LOG.debug("Mapping target interval {} {}", Intervals.minAsLongArray(target), Intervals.maxAsLongArray(target));
+
+		final int width = (int) target.dimension(0);
+		final int height = (int) target.dimension(1);
+		final int cr = -width;
+
+		target.min(min);
+		target.max(max);
 
 		final int numTasks;
 		if (numThreads > 1)
@@ -231,6 +208,8 @@ public class VolatileHierarchyProjectorNoPreMultiply<A extends Volatile<?>>
 		final ExecutorService ex             = createExecutor
 		                                       ? Executors.newFixedThreadPool(numThreads)
 		                                       : executorService;
+
+
 		for (i = 0; i < numInvalidLevels && !valid; ++i)
 		{
 			final byte iFinal = (byte) i;
@@ -241,7 +220,7 @@ public class VolatileHierarchyProjectorNoPreMultiply<A extends Volatile<?>>
 			final ArrayList<Callable<Void>> tasks = new ArrayList<>(numTasks);
 			for (int taskNum = 0; taskNum < numTasks; ++taskNum)
 			{
-				final int  myOffset = width * (int) (taskNum * taskHeight);
+				final long myOffset = width * (int) (taskNum * taskHeight);
 				final long myMinY   = min[1] + (int) (taskNum * taskHeight);
 				final int  myHeight = (int) ((taskNum == numTasks - 1
 				                              ? height
@@ -253,7 +232,7 @@ public class VolatileHierarchyProjectorNoPreMultiply<A extends Volatile<?>>
 
 					final RandomAccess<ARGBType> targetRandomAccess = target.randomAccess(target);
 					final Cursor<ByteType>       maskCursor         = Views.flatIterable(mask).cursor();
-					final RandomAccess<A>        sourceRandomAccess = sources.get(iFinal).randomAccess(sourceInterval);
+					final RandomAccess<A>        sourceRandomAccess = sources.get(iFinal).randomAccess(target);
 					int                          myNumInvalidPixels = 0;
 
 					final long[] smin = new long[n];
@@ -322,7 +301,7 @@ public class VolatileHierarchyProjectorNoPreMultiply<A extends Volatile<?>>
 			ex.shutdown();
 
 		if (clearUntouchedTargetPixels && !interrupted.get())
-			clearUntouchedTargetPixels();
+			clearUntouchedTargetPixels(target);
 
 		final long lastFrameTime = stopWatch.nanoTime();
 		//		final long numIoBytes = iostat.getIoBytes() - startIoBytes;

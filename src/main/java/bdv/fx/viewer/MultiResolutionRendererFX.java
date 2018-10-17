@@ -32,7 +32,7 @@ package bdv.fx.viewer;
 import java.util.concurrent.ExecutorService;
 
 import bdv.cache.CacheControl;
-import bdv.viewer.render.AccumulateProjectorFactory;
+import bdv.fx.viewer.project.AccumulateProjectorFactory;
 import net.imglib2.Volatile;
 import net.imglib2.img.array.ArrayImg;
 import net.imglib2.type.numeric.ARGBType;

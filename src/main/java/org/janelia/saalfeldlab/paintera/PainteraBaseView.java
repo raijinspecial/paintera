@@ -11,10 +11,10 @@ import java.util.function.Function;
 import java.util.function.LongFunction;
 
 import bdv.cache.CacheControl;
+import bdv.fx.viewer.ViewerOptions;
 import bdv.viewer.Interpolation;
 import bdv.viewer.Source;
 import bdv.viewer.SourceAndConverter;
-import bdv.viewer.ViewerOptions;
 import gnu.trove.set.hash.TLongHashSet;
 import javafx.collections.ListChangeListener;
 import javafx.collections.ObservableList;
@@ -141,11 +141,7 @@ public class PainteraBaseView
 		super();
 		this.globalCache = new GlobalCache(MAX_NUM_MIPMAP_LEVELS, numFetcherThreads, globalBackingCache, (Invalidate<GlobalCache.Key<?>>)globalBackingCache);
 		this.viewerOptions = viewerOptions
-				.accumulateProjectorFactory(new CompositeProjectorPreMultiply.CompositeProjectorFactory(sourceInfo
-						.composites()))
-				// .accumulateProjectorFactory( new
-				// ClearingCompositeProjector.ClearingCompositeProjectorFactory<>(
-				// sourceInfo.composites(), new ARGBType() ) )
+				.accumulateProjectorFactory(new CompositeProjectorPreMultiply.CompositeProjectorFactory(sourceInfo.composites()))
 				.numRenderingThreads(Math.min(3, Math.max(1, Runtime.getRuntime().availableProcessors() / 3)));
 		this.views = new OrthogonalViews<>(
 				manager,

@@ -1,4 +1,4 @@
-package bdv.fx.viewer;
+package bdv.fx.viewer.project;
 
 import java.util.ArrayList;
 import java.util.concurrent.Callable;
@@ -13,10 +13,9 @@ import net.imglib2.RandomAccessible;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.converter.Converter;
 import net.imglib2.type.numeric.ARGBType;
-import net.imglib2.ui.AbstractInterruptibleProjector;
-import net.imglib2.ui.InterruptibleProjector;
 import net.imglib2.ui.util.StopWatch;
 import net.imglib2.view.Views;
+import org.janelia.saalfeldlab.util.IntervalUtils;
 
 /**
  * An {@link InterruptibleProjector}, that renders a target 2D {@link RandomAccessibleInterval} by copying values from a
@@ -49,8 +48,6 @@ public class SimpleInterruptibleProjectorPreMultiply<A> extends AbstractInterrup
 	 */
 	protected long lastFrameRenderNanoTime;
 
-	private final Interval renderInterval;
-
 	/**
 	 * Create new projector with the given source and a converter from source to target pixel type.
 	 *
@@ -67,10 +64,9 @@ public class SimpleInterruptibleProjectorPreMultiply<A> extends AbstractInterrup
 			final RandomAccessible<A> source,
 			final Converter<? super A, ARGBType> converter,
 			final RandomAccessibleInterval<ARGBType> target,
-			final int numThreads,
-			final Interval renderInterval)
+			final int numThreads)
 	{
-		this(source, converter, target, numThreads, null, renderInterval);
+		this(source, converter, target, numThreads, null);
 	}
 
 	public SimpleInterruptibleProjectorPreMultiply(
@@ -78,15 +74,13 @@ public class SimpleInterruptibleProjectorPreMultiply<A> extends AbstractInterrup
 			final Converter<? super A, ARGBType> converter,
 			final RandomAccessibleInterval<ARGBType> target,
 			final int numThreads,
-			final ExecutorService executorService,
-			final Interval renderInterval)
+			final ExecutorService executorService)
 	{
-		super(source.numDimensions(), converter, Views.interval(target, renderInterval));
+		super(source.numDimensions(), converter, target);
 		this.source = source;
 		this.numThreads = numThreads;
 		this.executorService = executorService;
 		lastFrameRenderNanoTime = -1;
-		this.renderInterval = renderInterval;
 	}
 
 	/**
@@ -96,12 +90,14 @@ public class SimpleInterruptibleProjectorPreMultiply<A> extends AbstractInterrup
 	 * @return true if rendering was completed (all target pixels written). false if rendering was interrupted.
 	 */
 	@Override
-	public boolean map()
+	public boolean map(final Interval interval)
 	{
 		interrupted.set(false);
 
 		final StopWatch stopWatch = new StopWatch();
 		stopWatch.start();
+
+		final RandomAccessibleInterval<ARGBType> target = IntervalUtils.intersectIfNecessary(this.target, interval);
 
 		min[0] = target.min(0);
 		min[1] = target.min(1);
@@ -137,7 +133,6 @@ public class SimpleInterruptibleProjectorPreMultiply<A> extends AbstractInterrup
 				if (interrupted.get())
 					return null;
 
-				System.out.println("WTF!");
 				final RandomAccess<A>        sourceRandomAccess = source.randomAccess(
 						SimpleInterruptibleProjectorPreMultiply.this);
 				final RandomAccess<ARGBType> targetRandomAccess = target.randomAccess(target);

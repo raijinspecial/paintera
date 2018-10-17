@@ -30,19 +30,22 @@
 package bdv.fx.viewer;
 
 import bdv.cache.CacheControl;
+import bdv.fx.viewer.project.AccumulateProjectorFactory;
+import bdv.fx.viewer.project.EmptyProjector;
+import bdv.fx.viewer.project.SimpleInterruptibleProjectorPreMultiply;
+import bdv.fx.viewer.project.VolatileHierarchyProjectorNoPreMultiply;
+import bdv.fx.viewer.project.VolatileHierarchyProjectorPreMultiply;
+import bdv.fx.viewer.project.VolatileProjector;
 import bdv.util.MipmapTransforms;
 import bdv.viewer.Interpolation;
 import bdv.viewer.Source;
 import bdv.viewer.SourceAndConverter;
-import bdv.viewer.render.AccumulateProjectorFactory;
 import bdv.viewer.render.DefaultMipmapOrdering;
-import bdv.viewer.render.EmptyProjector;
 import bdv.viewer.render.MipmapOrdering;
 import bdv.viewer.render.MipmapOrdering.Level;
 import bdv.viewer.render.MipmapOrdering.MipmapHints;
 import bdv.viewer.render.Prefetcher;
 import bdv.viewer.render.VolatileHierarchyProjector;
-import bdv.viewer.render.VolatileProjector;
 import net.imglib2.Dimensions;
 import net.imglib2.FinalInterval;
 import net.imglib2.Interval;
@@ -80,8 +83,6 @@ import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.function.Function;
 import java.util.function.ToIntFunction;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 /**
  *
@@ -91,7 +92,7 @@ import java.util.stream.Stream;
 public class MultiResolutionRendererGeneric<T>
 {
 
-	private static final Logger LOG = LoggerFactory.getLogger(MethodHandles.class);
+	private static final Logger LOG = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
 	public interface ImageGenerator<T>
 	{
@@ -216,7 +217,7 @@ public class MultiResolutionRendererGeneric<T>
 	/**
 	 * TODO
 	 */
-	private final bdv.viewer.render.AccumulateProjectorFactory<ARGBType> accumulateProjectorFactory;
+	private final AccumulateProjectorFactory<ARGBType> accumulateProjectorFactory;
 
 	/**
 	 * Controls IO budgeting and fetcher queue.
@@ -449,6 +450,8 @@ public class MultiResolutionRendererGeneric<T>
 
 		final boolean createProjector;
 
+		final Interval renderInterval = this.renderInterval;
+
 		synchronized (this)
 		{
 			// Rendering may be cancelled unless we are rendering at coarsest
@@ -481,8 +484,7 @@ public class MultiResolutionRendererGeneric<T>
 							viewerTransform,
 							currentScreenScaleIndex,
 							wrapAsArrayImg.apply(screenImage),
-							interpolationForSource
-					                   );
+							interpolationForSource);
 				}
 				projector = p;
 			}
@@ -495,8 +497,9 @@ public class MultiResolutionRendererGeneric<T>
 			requestedScreenScaleIndex = 0;
 		}
 
-		// try rendering
-		final boolean success    = p.map(createProjector);
+		LOG.debug("Projector is of type {}", p.getClass());
+
+		final boolean success    = p.map(renderInterval, createProjector);
 		final long    rendertime = p.getLastFrameRenderNanoTime();
 
 		synchronized (this)
@@ -528,7 +531,7 @@ public class MultiResolutionRendererGeneric<T>
 				}
 
 				if (currentScreenScaleIndex > 0)
-					requestRepaint(currentScreenScaleIndex - 1, this.renderInterval);
+					requestRepaint(currentScreenScaleIndex - 1, renderInterval);
 				else if (!p.isValid())
 				{
 					try
@@ -539,10 +542,9 @@ public class MultiResolutionRendererGeneric<T>
 						// restore interrupted state
 						Thread.currentThread().interrupt();
 					}
-					requestRepaint(currentScreenScaleIndex, this.renderInterval);
+					requestRepaint(currentScreenScaleIndex, renderInterval);
 				}
-
-				if (currentScreenScaleIndex == 0)
+				else
 					this.renderInterval = null;
 			}
 			else
@@ -574,8 +576,8 @@ public class MultiResolutionRendererGeneric<T>
 		if (interval != null)
 			this.renderInterval =
 					this.renderInterval == null
-							? new FinalInterval(interval)
-							: Intervals.union(this.renderInterval, interval);
+							? interval == null ? null : new FinalInterval(interval)
+							: interval == null ? null : Intervals.union(this.renderInterval, interval);
 		painterThread.requestRepaint();
 	}
 
@@ -613,7 +615,6 @@ public class MultiResolutionRendererGeneric<T>
 		 */
 		//		CacheIoTiming.getIoTimeBudget().clear(); // clear time budget such that prefetching doesn't wait for
 		// loading blocks.
-		final Interval interval = intersect(renderInterval, screenImage);
 		VolatileProjector projector;
 		if (sacs.isEmpty())
 			projector = new EmptyProjector<>(screenImage);
@@ -630,8 +631,7 @@ public class MultiResolutionRendererGeneric<T>
 					screenImage,
 					renderMaskArrays[0],
 					interpolation,
-					true,
-					interval);
+					true);
 		}
 		else
 		{
@@ -654,18 +654,16 @@ public class MultiResolutionRendererGeneric<T>
 						renderImage,
 						maskArray,
 						interpolation,
-						false,
-						interval);
+						false);
 				sourceProjectors.add(p);
 				sources.add(sac.getSpimSource());
 				sourceImages.add(renderImage);
 			}
-			LOG.warn("Creating projector for interval ({} {})", Intervals.minAsLongArray(interval), Intervals.maxAsLongArray(interval));
 			projector = accumulateProjectorFactory.createAccumulateProjector(
 					sourceProjectors,
 					sources,
 					sourceImages,
-					Views.interval(screenImage, interval),
+					screenImage,
 					numRenderingThreads,
 					renderingExecutorService);
 		}
@@ -685,16 +683,15 @@ public class MultiResolutionRendererGeneric<T>
 				final Converter<? super A, ARGBType> converter,
 				final RandomAccessibleInterval<ARGBType> target,
 				final int numThreads,
-				final ExecutorService executorService,
-				final Interval interval)
+				final ExecutorService executorService)
 		{
-			super(source, converter, target, numThreads, executorService, interval);
+			super(source, converter, target, numThreads, executorService);
 		}
 
 		@Override
-		public boolean map(final boolean clearUntouchedTargetPixels)
+		public boolean map(final Interval interval, final boolean clearUntouchedTargetPixels)
 		{
-			final boolean success = super.map();
+			final boolean success = super.map(interval);
 			valid |= success;
 			return success;
 		}
@@ -714,8 +711,7 @@ public class MultiResolutionRendererGeneric<T>
 			final ArrayImg<ARGBType, ? extends IntAccess> screenImage,
 			final RandomAccessibleInterval<ByteType> maskArray,
 			final Interpolation interpolation,
-			final boolean preMultiply,
-			final Interval interval)
+			final boolean preMultiply)
 	{
 		if (useVolatileIfAvailable)
 			if (source.asVolatile() != null)
@@ -733,9 +729,7 @@ public class MultiResolutionRendererGeneric<T>
 						screenImage,
 						maskArray,
 						interpolation,
-						preMultiply,
-						interval
-				                                          );
+						preMultiply);
 			}
 			else if (source.getSpimSource().getType() instanceof Volatile)
 			{
@@ -754,9 +748,7 @@ public class MultiResolutionRendererGeneric<T>
 						screenImage,
 						maskArray,
 						interpolation,
-						preMultiply,
-						interval
-				                                          );
+						preMultiply);
 			}
 
 		final AffineTransform3D screenScaleTransform = screenScaleTransforms[currentScreenScaleIndex];
@@ -774,8 +766,7 @@ public class MultiResolutionRendererGeneric<T>
 						null,
 						interpolation
 				                    ),
-				source.getConverter(), screenImage, numRenderingThreads, renderingExecutorService,
-				interval
+				source.getConverter(), screenImage, numRenderingThreads, renderingExecutorService
 		);
 	}
 
@@ -787,8 +778,7 @@ public class MultiResolutionRendererGeneric<T>
 			final ArrayImg<ARGBType, ? extends IntAccess> screenImage,
 			final RandomAccessibleInterval<ByteType> maskArray,
 			final Interpolation interpolation,
-			final boolean preMultiply,
-			final Interval interval)
+			final boolean preMultiply)
 	{
 		LOG.debug(
 				"Creating single source volatile projector for source={} (name={})",

@@ -10,7 +10,7 @@ import java.util.function.Supplier;
 import java.util.regex.Pattern;
 import java.util.stream.IntStream;
 
-import bdv.viewer.ViewerOptions;
+import bdv.fx.viewer.ViewerOptions;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonObject;
 import javafx.application.Application;

@@ -27,9 +27,8 @@
  * POSSIBILITY OF SUCH DAMAGE.
  * #L%
  */
-package bdv.fx.viewer;
+package bdv.fx.viewer.project;
 
-import bdv.viewer.render.VolatileProjector;
 import net.imglib2.Cursor;
 import net.imglib2.Interval;
 import net.imglib2.IterableInterval;
@@ -37,8 +36,13 @@ import net.imglib2.RandomAccessible;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.ui.InterruptibleProjector;
 import net.imglib2.ui.util.StopWatch;
+import net.imglib2.util.Intervals;
 import net.imglib2.view.Views;
+import org.janelia.saalfeldlab.util.IntervalUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
+import java.lang.invoke.MethodHandles;
 import java.util.ArrayList;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
@@ -47,6 +51,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 public abstract class AccumulateProjector< A, B > implements VolatileProjector
 {
+	private final Logger LOG = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
+
 	protected final ArrayList< VolatileProjector > sourceProjectors;
 
 	protected final ArrayList< IterableInterval< ? extends A > > sources;
@@ -79,57 +85,54 @@ public abstract class AccumulateProjector< A, B > implements VolatileProjector
 
 	protected volatile boolean valid = false;
 
-	protected final Interval renderInterval;
-
 	public AccumulateProjector(
 			final ArrayList< VolatileProjector > sourceProjectors,
 			final ArrayList< ? extends RandomAccessible< ? extends A > > sources,
 			final RandomAccessibleInterval< B > target,
 			final int numThreads,
-			final ExecutorService executorService,
-			final Interval renderInterval)
+			final ExecutorService executorService)
 	{
 		this.sourceProjectors = sourceProjectors;
 		this.sources = new ArrayList<>();
 		for ( final RandomAccessible< ? extends A > source : sources )
 			this.sources.add( Views.flatIterable( Views.interval( source, target ) ) );
-		this.target = Views.interval(target, renderInterval);
+		this.target = target;
 		this.iterableTarget = Views.flatIterable(this.target);
 		this.numThreads = numThreads;
 		this.executorService = executorService;
 		lastFrameRenderNanoTime = -1;
-		this.renderInterval = renderInterval;
 	}
 
 	@Override
-	public boolean map()
+	public boolean map(final Interval interval)
 	{
-		return map( true );
+		return map(interval, true );
 	}
 
 	@Override
-	public boolean map( final boolean clearUntouchedTargetPixels )
+	public boolean map(final Interval interval, final boolean clearUntouchedTargetPixels)
 	{
 		interrupted.set( false );
 
 		final StopWatch stopWatch = new StopWatch();
 		stopWatch.start();
 
+		final RandomAccessibleInterval<B> target = IntervalUtils.intersectIfNecessary(this.target, interval);
+		LOG.debug("Mapping target interval {} {}", Intervals.minAsLongArray(target), Intervals.maxAsLongArray(target));
+
 		valid = true;
-		for ( final VolatileProjector p : sourceProjectors )
-			if ( !p.isValid() )
-				if ( !p.map( clearUntouchedTargetPixels ) )
+		for (final VolatileProjector p : sourceProjectors) {
+			LOG.debug("Projecting for projector of type {}", p.getClass());
+			if (!p.isValid())
+				if (!p.map(target, clearUntouchedTargetPixels))
 					return false;
 				else
 					valid &= p.isValid();
+		}
 
-		final int width = ( int ) target.dimension( 0 );
-		final int height = ( int ) target.dimension( 1 );
+		final int width = (int) target.dimension(0);
+		final int height = (int) target.dimension(1);
 		final int length = width * height;
-//		final int mx = (int) target.min(0);
-//		final int my = (int) target.min(1);
-//		final int Mx = (int) target.max(0);
-//		final int My = (int) target.max(1);
 
 		final boolean createExecutor = ( executorService == null );
 		final ExecutorService ex = createExecutor ? Executors.newFixedThreadPool( numThreads ) : executorService;
