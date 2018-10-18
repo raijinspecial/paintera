@@ -3,9 +3,7 @@ package org.janelia.saalfeldlab.paintera;
 import com.google.gson.JsonObject;
 import javafx.application.Application;
 import javafx.application.Platform;
-import javafx.event.Event;
 import javafx.scene.Scene;
-import javafx.scene.input.KeyEvent;
 import javafx.stage.Stage;
 import javafx.stage.WindowEvent;
 import net.imglib2.converter.ARGBColorConverter;
@@ -21,6 +19,8 @@ import org.janelia.saalfeldlab.n5.N5Reader;
 import org.janelia.saalfeldlab.paintera.composition.ARGBCompositeAlphaAdd;
 import org.janelia.saalfeldlab.paintera.composition.CompositeCopy;
 import org.janelia.saalfeldlab.paintera.data.DataSource;
+import org.janelia.saalfeldlab.paintera.data.axisorder.AxisOrder;
+import org.janelia.saalfeldlab.paintera.data.axisorder.AxisOrderNotSupported;
 import org.janelia.saalfeldlab.paintera.data.n5.DataTypeNotSupported;
 import org.janelia.saalfeldlab.paintera.data.n5.N5ChannelDataSource;
 import org.janelia.saalfeldlab.paintera.data.n5.N5Meta;
@@ -28,6 +28,9 @@ import org.janelia.saalfeldlab.paintera.data.n5.ReflectionException;
 import org.janelia.saalfeldlab.paintera.data.n5.VolatileWithSet;
 import org.janelia.saalfeldlab.paintera.state.ChannelSourceState;
 import org.janelia.saalfeldlab.paintera.state.RawSourceState;
+import org.janelia.saalfeldlab.util.n5.N5Data;
+import org.janelia.saalfeldlab.util.n5.N5Helpers;
+import org.janelia.saalfeldlab.util.n5.N5Types;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import picocli.CommandLine;
@@ -109,7 +112,7 @@ public class PainteraShowContainer extends Application {
 		}
 
 		for (N5Meta rawMeta : rawDatasets) {
-			addRawSource(viewer.baseView, rawMeta, clArgs.revertArrayAttributes);
+			addRawSource(viewer.baseView, rawMeta, clArgs.axisOrder, clArgs.revertArrayAttributes);
 		}
 
 		for (N5Meta channelMeta : channelDatasets) {
@@ -146,6 +149,9 @@ public class PainteraShowContainer extends Application {
 
 		@CommandLine.Option(names = {"--height"})
 		Integer height = 900;
+
+		@CommandLine.Option(names = {"--dataset-axis-order"}, description = "Axis order of data. This is not the axis order of array attributes!")
+		AxisOrder axisOrder = AxisOrder.XYZ;
 	}
 
 	private static boolean isLabelData(N5Reader reader, String group) throws IOException {
@@ -154,7 +160,7 @@ public class PainteraShowContainer extends Application {
 			LOG.debug("Got paintera info {} for group {}", painteraInfo, group);
 			return painteraInfo.get("type").getAsString().equals("label");
 		}
-		return N5Helpers.isLabelMultisetType(reader, group) || reader.getDatasetAttributes(group).getDataType().equals(DataType.UINT64);
+		return N5Types.isLabelMultisetType(reader, group) || reader.getDatasetAttributes(group).getDataType().equals(DataType.UINT64);
 	}
 
 	private static int getNumDimensions(N5Reader n5, String dataset) throws IOException {
@@ -172,15 +178,16 @@ public class PainteraShowContainer extends Application {
 	private static <T extends RealType<T> & NativeType<T>, V extends AbstractVolatileRealType<T, V> & NativeType<V>> void addRawSource(
 			final PainteraBaseView viewer,
 			final N5Meta rawMeta,
+			AxisOrder axisOrder,
 			final boolean revertArrayAttributes
-	) throws IOException, ReflectionException {
+	) throws IOException, ReflectionException, AxisOrderNotSupported {
 		LOG.info("Adding raw source {}", rawMeta);
-		DataSource<T, V> source = N5Helpers.openRawAsSource(
+		DataSource<T, V> source = N5Data.openRawAsSource(
 				rawMeta.reader(),
 				rawMeta.dataset(),
 				N5Helpers.getTransform(rawMeta.reader(), rawMeta.dataset(), revertArrayAttributes),
-				viewer.getQueue(),
-				viewer.getQueue().getNumPriorities() - 1,
+				viewer.getGlobalCache(),
+				viewer.getGlobalCache().getNumPriorities() - 1,
 				rawMeta.dataset());
 		ARGBColorConverter.Imp0<V> conv = new ARGBColorConverter.Imp0<>();
 		RawSourceState<T, V> state = new RawSourceState<>(source, conv, new CompositeCopy<>(), source.getName());
@@ -227,12 +234,13 @@ public class PainteraShowContainer extends Application {
 			N5ChannelDataSource<T, V> source = N5ChannelDataSource.zeroExtended(
 					meta,
 					N5Helpers.getTransform(meta.reader(), meta.dataset(), revertArrayAttributes),
-					viewer.getQueue(),
+					viewer.getGlobalCache(),
 					cmin == 0 && cmax == channelMax ? meta.dataset() : String.format("%s-channels-[%d,%d]", meta.dataset(), cmin, cmax)	,
-					viewer.getQueue().getNumPriorities() - 1,
+					viewer.getGlobalCache().getNumPriorities() - 1,
 					channelDimension,
 					cmin,
-					cmax);
+					cmax,
+					false);
 			ARGBCompositeColorConverter<V, RealComposite<V>, VolatileWithSet<RealComposite<V>>> conv = ARGBCompositeColorConverter.imp0((int) source.numChannels());
 
 			ChannelSourceState<T, V, RealComposite<V>, VolatileWithSet<RealComposite<V>>> state = new ChannelSourceState<>(

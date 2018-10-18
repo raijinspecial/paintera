@@ -1,15 +1,16 @@
 package org.janelia.saalfeldlab.paintera.ui.opendialog.menu.n5;
 
-import bdv.util.volatiles.SharedQueue;
 import javafx.beans.binding.Bindings;
 import javafx.beans.binding.BooleanBinding;
 import javafx.beans.binding.ObjectBinding;
 import javafx.beans.binding.StringBinding;
 import javafx.beans.property.DoubleProperty;
+import javafx.beans.property.ObjectProperty;
 import javafx.beans.property.SimpleBooleanProperty;
 import javafx.beans.property.SimpleObjectProperty;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.beans.property.StringProperty;
+import javafx.beans.value.ObservableObjectValue;
 import javafx.beans.value.ObservableStringValue;
 import javafx.beans.value.ObservableValue;
 import javafx.collections.FXCollections;
@@ -23,14 +24,14 @@ import javafx.scene.layout.GridPane;
 import javafx.scene.layout.Priority;
 import net.imglib2.Interval;
 import net.imglib2.Volatile;
-import net.imglib2.cache.img.CachedCellImg;
 import net.imglib2.converter.ARGBColorConverter.InvertingImp1;
+import net.imglib2.converter.ARGBCompositeColorConverter;
 import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.type.NativeType;
 import net.imglib2.type.numeric.IntegerType;
 import net.imglib2.type.numeric.RealType;
-import net.imglib2.type.numeric.integer.UnsignedLongType;
 import net.imglib2.type.volatiles.AbstractVolatileRealType;
+import net.imglib2.view.composite.RealComposite;
 import org.janelia.saalfeldlab.fx.ui.ExceptionNode;
 import org.janelia.saalfeldlab.fx.util.InvokeOnJavaFXApplicationThread;
 import org.janelia.saalfeldlab.labels.blocks.LabelBlockLookup;
@@ -38,24 +39,35 @@ import org.janelia.saalfeldlab.n5.DataType;
 import org.janelia.saalfeldlab.n5.DatasetAttributes;
 import org.janelia.saalfeldlab.n5.N5Reader;
 import org.janelia.saalfeldlab.n5.N5Writer;
-import org.janelia.saalfeldlab.paintera.N5Helpers;
+import org.janelia.saalfeldlab.paintera.cache.global.GlobalCache;
+import org.janelia.saalfeldlab.paintera.composition.ARGBCompositeAlphaAdd;
 import org.janelia.saalfeldlab.paintera.composition.ARGBCompositeAlphaYCbCr;
 import org.janelia.saalfeldlab.paintera.composition.CompositeCopy;
 import org.janelia.saalfeldlab.paintera.control.assignment.FragmentSegmentAssignmentState;
 import org.janelia.saalfeldlab.paintera.control.lock.LockedSegmentsOnlyLocal;
 import org.janelia.saalfeldlab.paintera.control.selection.SelectedIds;
 import org.janelia.saalfeldlab.paintera.data.DataSource;
+import org.janelia.saalfeldlab.paintera.data.axisorder.AxisOrder;
 import org.janelia.saalfeldlab.paintera.data.mask.Masks;
+import org.janelia.saalfeldlab.paintera.data.mask.persist.PersistCanvas;
 import org.janelia.saalfeldlab.paintera.data.n5.CommitCanvasN5;
+import org.janelia.saalfeldlab.paintera.data.n5.N5ChannelDataSource;
+import org.janelia.saalfeldlab.paintera.data.n5.N5Meta;
+import org.janelia.saalfeldlab.paintera.data.n5.VolatileWithSet;
 import org.janelia.saalfeldlab.paintera.id.IdService;
 import org.janelia.saalfeldlab.paintera.meshes.InterruptibleFunction;
+import org.janelia.saalfeldlab.paintera.meshes.MeshManagerWithAssignmentForSegments;
+import org.janelia.saalfeldlab.paintera.state.ChannelSourceState;
 import org.janelia.saalfeldlab.paintera.state.LabelSourceState;
 import org.janelia.saalfeldlab.paintera.state.RawSourceState;
 import org.janelia.saalfeldlab.paintera.stream.HighlightingStreamConverter;
 import org.janelia.saalfeldlab.paintera.stream.ModalGoldenAngleSaturatedHighlightingARGBStream;
-import org.janelia.saalfeldlab.paintera.ui.opendialog.BackendDialog;
 import org.janelia.saalfeldlab.paintera.ui.opendialog.DatasetInfo;
+import org.janelia.saalfeldlab.paintera.ui.opendialog.meta.ChannelInformation;
 import org.janelia.saalfeldlab.util.MakeUnchecked;
+import org.janelia.saalfeldlab.util.n5.N5Data;
+import org.janelia.saalfeldlab.util.n5.N5Helpers;
+import org.janelia.saalfeldlab.util.n5.N5Types;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -68,12 +80,12 @@ import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.function.BiConsumer;
 import java.util.function.Consumer;
+import java.util.function.IntFunction;
 import java.util.function.Supplier;
 import java.util.stream.IntStream;
 
-public class GenericBackendDialogN5 implements BackendDialog
+public class GenericBackendDialogN5
 {
 
 	private static final String EMPTY_STRING = "";
@@ -108,6 +120,14 @@ public class GenericBackendDialogN5 implements BackendDialog
 	private final SimpleBooleanProperty datasetUpdateFailed = new SimpleBooleanProperty(false);
 
 	private final ExecutorService propagationExecutor;
+
+	private final ObjectProperty<DatasetAttributes> datasetAttributes = new SimpleObjectProperty<>();
+
+	private final ObjectBinding<long[]> dimensions = Bindings.createObjectBinding(() -> Optional.ofNullable(datasetAttributes.get()).map(DatasetAttributes::getDimensions).orElse(null), datasetAttributes);
+
+	private final ObjectProperty<AxisOrder> axisOrder = new SimpleObjectProperty<>();
+
+	private final ChannelInformation channelInformation = new ChannelInformation();
 
 	private final BooleanBinding isReady = isN5Valid
 			.and(isDatasetValid)
@@ -223,6 +243,16 @@ public class GenericBackendDialogN5 implements BackendDialog
 		dataset.set("");
 	}
 
+	public ObservableObjectValue<DatasetAttributes> datsetAttributesProperty()
+	{
+		return this.datasetAttributes;
+	}
+
+	public ObservableObjectValue<long[]> dimensionsProperty()
+	{
+		return this.dimensions;
+	}
+
 	public void updateDatasetInfo(final String group, final DatasetInfo info)
 	{
 
@@ -234,19 +264,21 @@ public class GenericBackendDialogN5 implements BackendDialog
 			setResolution(N5Helpers.getResolution(n5, group));
 			setOffset(N5Helpers.getOffset(n5, group));
 
-			final DataType dataType = N5Helpers.getDataType(n5, group);
+			this.datasetAttributes.set(N5Helpers.getDatasetAttributes(n5, group));
+
+			final DataType dataType = N5Types.getDataType(n5, group);
 
 			this.datasetInfo.minProperty().set(Optional.ofNullable(n5.getAttribute(
 					group,
 					MIN_KEY,
 					Double.class
-			                                                                      )).orElse(N5Helpers.minForType(
+			                                                                      )).orElse(N5Types.minForType(
 					dataType)));
 			this.datasetInfo.maxProperty().set(Optional.ofNullable(n5.getAttribute(
 					group,
 					MAX_KEY,
 					Double.class
-			                                                                      )).orElse(N5Helpers.maxForType(
+			                                                                      )).orElse(N5Types.maxForType(
 					dataType)));
 		} catch (final IOException e)
 		{
@@ -254,37 +286,31 @@ public class GenericBackendDialogN5 implements BackendDialog
 		}
 	}
 
-	@Override
 	public Node getDialogNode()
 	{
 		return node;
 	}
 
-	@Override
 	public StringBinding errorMessage()
 	{
 		return errorMessage;
 	}
 
-	@Override
 	public DoubleProperty[] resolution()
 	{
 		return this.datasetInfo.spatialResolutionProperties();
 	}
 
-	@Override
 	public DoubleProperty[] offset()
 	{
 		return this.datasetInfo.spatialOffsetProperties();
 	}
 
-	@Override
 	public DoubleProperty min()
 	{
 		return this.datasetInfo.minProperty();
 	}
 
-	@Override
 	public DoubleProperty max()
 	{
 		return this.datasetInfo.maxProperty();
@@ -298,6 +324,11 @@ public class GenericBackendDialogN5 implements BackendDialog
 	public IdService idService() throws IOException
 	{
 		return N5Helpers.idService(this.n5.get(), this.dataset.get());
+	}
+
+	public ChannelInformation getChannelInformation()
+	{
+		return this.channelInformation;
 	}
 
 	private Node initializeNode(
@@ -322,49 +353,99 @@ public class GenericBackendDialogN5 implements BackendDialog
 		return grid;
 	}
 
-	@Override
 	public ObservableStringValue nameProperty()
 	{
 		return name;
 	}
 
-	@Override
 	public String identifier()
 	{
 		return identifier;
 	}
 
-	@Override
+	public <T extends RealType<T> & NativeType<T>, V extends AbstractVolatileRealType<T, V> & NativeType<V>>
+	List<ChannelSourceState<T, V, RealComposite<V>, VolatileWithSet<RealComposite<V>>>> getChannels(
+			final String name,
+			final GlobalCache globalCache,
+			final int priority) throws Exception
+	{
+		final N5Reader                  reader            = n5.get();
+		final String                    dataset           = this.dataset.get();
+		final N5Meta                    meta              = N5Meta.fromReader(reader, dataset);
+		final double[]                  resolution        = asPrimitiveArray(resolution());
+		final double[]                  offset            = asPrimitiveArray(offset());
+		final AffineTransform3D         transform         = N5Helpers.fromResolutionAndOffset(resolution, offset);
+		final long                      numChannels       = datasetAttributes.get().getDimensions()[axisOrderProperty().get().channelIndex()];
+		final int                       channelsPerSource = channelInformation.channelsPerSourceProperty().get();
+		final boolean                   revertChannels    = channelInformation.revertChannelAxisProperty().get();
+
+		LOG.debug("Got channel info: num channels={} channels per source={} revert channel order? {}", numChannels, channelsPerSource, revertChannels);
+
+		List<ChannelSourceState<T, V, RealComposite<V>, VolatileWithSet<RealComposite<V>>>> sources = new ArrayList<>();
+		for (int channelMin = 0; channelMin < numChannels; channelMin += channelsPerSource) {
+
+			final long channelMax = Math.min(channelMin + channelInformation.channelsPerSourceProperty().get(), numChannels) - 1;
+			String sourceName = channelMin <= 0 && channelMax >= numChannels - 1
+					? name
+					: getChannelSourceName(name, channelMin, channelMax, numChannels, revertChannels);
+			final N5ChannelDataSource<T, V> source = N5ChannelDataSource.zeroExtended(
+					meta,
+					transform,
+					globalCache,
+					sourceName,
+					priority,
+					axisOrder.get().channelIndex(),
+					channelMin,
+					channelMax,
+					revertChannels
+			);
+
+			ARGBCompositeColorConverter<V, RealComposite<V>, VolatileWithSet<RealComposite<V>>> converter =
+					ARGBCompositeColorConverter.imp1((int) source.numChannels(), min().get(), max().get());
+
+
+			ChannelSourceState<T, V, RealComposite<V>, VolatileWithSet<RealComposite<V>>> state = new ChannelSourceState<>(
+					source,
+					converter,
+					new ARGBCompositeAlphaAdd(),
+					sourceName);
+			sources.add(state);
+
+		}
+		LOG.debug("Returning {} channel source states", sources.size());
+		return sources;
+	}
+
 	public <T extends RealType<T> & NativeType<T>, V extends AbstractVolatileRealType<T, V> & NativeType<V>>
 	RawSourceState<T, V> getRaw(
 			final String name,
-			final SharedQueue sharedQueue,
+			final GlobalCache globalCache,
 			final int priority) throws Exception
 	{
+		LOG.info("Raw data set requested. Name=", name);
 		final N5Reader             reader     = n5.get();
 		final String               dataset    = this.dataset.get();
 		final double[]             resolution = asPrimitiveArray(resolution());
 		final double[]             offset     = asPrimitiveArray(offset());
 		final AffineTransform3D    transform  = N5Helpers.fromResolutionAndOffset(resolution, offset);
-		final DataSource<T, V>     source     = N5Helpers.openRawAsSource(
+		final DataSource<T, V>     source     = N5Data.openRawAsSource(
 				reader,
 				dataset,
 				transform,
-				sharedQueue,
+				globalCache,
 				priority,
 				name
 		                                                                 );
 		final InvertingImp1<V>     converter  = new InvertingImp1<>(min().get(), max().get());
 		final RawSourceState<T, V> state      = new RawSourceState<>(source, converter, new CompositeCopy<>(), name);
-		LOG.debug("Returning raw source state {} {}", name, state);
+		LOG.info("Returning raw source state {} {}", name, state);
 		return state;
 	}
 
-	@Override
 	public <D extends NativeType<D> & IntegerType<D>, T extends Volatile<D> & NativeType<T>> LabelSourceState<D, T>
 	getLabels(
 			final String name,
-			final SharedQueue sharedQueue,
+			final GlobalCache globalCache,
 			final int priority,
 			final Group meshesGroup,
 			final ExecutorService manager,
@@ -377,24 +458,24 @@ public class GenericBackendDialogN5 implements BackendDialog
 		final double[]          offset     = asPrimitiveArray(offset());
 		final AffineTransform3D transform  = N5Helpers.fromResolutionAndOffset(resolution, offset);
 		final DataSource<D, T>  source;
-		if (N5Helpers.isLabelMultisetType(reader, dataset))
+		if (N5Types.isLabelMultisetType(reader, dataset))
 		{
-			source = (DataSource) N5Helpers.openLabelMultisetAsSource(
+			source = (DataSource) N5Data.openLabelMultisetAsSource(
 					reader,
 					dataset,
 					transform,
-					sharedQueue,
+					globalCache,
 					priority,
 					name
 			                                                         );
 		}
 		else
 		{
-			source = (DataSource<D, T>) N5Helpers.openScalarAsSource(
+			source = (DataSource<D, T>) N5Data.openScalarAsSource(
 					reader,
 					dataset,
 					transform,
-					sharedQueue,
+					globalCache,
 					priority,
 					name
 			                                                        );
@@ -423,10 +504,28 @@ public class GenericBackendDialogN5 implements BackendDialog
 		final HighlightingStreamConverter<T> converter = HighlightingStreamConverter.forType(stream, masked.getType());
 
 		final LabelBlockLookup lookup = N5Helpers.getLabelBlockLookup(n5.get(), dataset);
+
+		IntFunction<InterruptibleFunction<Long, Interval[]>> loaderForLevelFactory = level -> InterruptibleFunction.fromFunction(
+				MakeUnchecked.function(
+						id -> lookup.read(level, id),
+						id -> {LOG.debug("Falling back to empty array"); return new Interval[0];}
+		));
+
 		InterruptibleFunction<Long, Interval[]>[] blockLoaders = IntStream
 				.range(0, masked.getNumMipmapLevels())
-				.mapToObj(level -> InterruptibleFunction.fromFunction( MakeUnchecked.function((MakeUnchecked.CheckedFunction<Long, Interval[]>) id -> lookup.read(level, id))))
+				.mapToObj(loaderForLevelFactory)
 				.toArray(InterruptibleFunction[]::new );
+
+		MeshManagerWithAssignmentForSegments meshManager = MeshManagerWithAssignmentForSegments.fromBlockLookup(
+				masked,
+				selectedIds,
+				assignment,
+				stream,
+				meshesGroup,
+				blockLoaders,
+				globalCache::createNewCache,
+				manager,
+				workers);
 
 		return new LabelSourceState<>(
 				masked,
@@ -437,11 +536,7 @@ public class GenericBackendDialogN5 implements BackendDialog
 				lockedSegments,
 				idService,
 				selectedIds,
-				meshesGroup,
-				blockLoaders,
-				manager,
-				workers
-		);
+				meshManager);
 	}
 
 	public boolean isLabelType() throws Exception
@@ -496,11 +591,10 @@ public class GenericBackendDialogN5 implements BackendDialog
 
 	public boolean isIntegerType() throws Exception
 	{
-		return N5Helpers.isIntegerType(getDataType());
+		return N5Types.isIntegerType(getDataType());
 	}
 
-	public BiConsumer<CachedCellImg<UnsignedLongType, ?>, long[]> commitCanvas()
-	{
+	public PersistCanvas commitCanvas() throws IOException {
 		final String   dataset = this.dataset.get();
 		final N5Writer writer  = this.n5.get();
 		return new CommitCanvasN5(writer, dataset);
@@ -514,5 +608,39 @@ public class GenericBackendDialogN5 implements BackendDialog
 	public double[] asPrimitiveArray(final DoubleProperty[] data)
 	{
 		return Arrays.stream(data).mapToDouble(DoubleProperty::get).toArray();
+	}
+
+	public void setResolution(final double[] resolution)
+	{
+		final DoubleProperty[] res = resolution();
+		for (int i = 0; i < res.length; ++i)
+		{
+			res[i].set(resolution[i]);
+		}
+	}
+
+	public void setOffset(final double[] offset)
+	{
+		final DoubleProperty[] off = offset();
+		for (int i = 0; i < off.length; ++i)
+		{
+			off[i].set(offset[i]);
+		}
+	}
+
+	public ObjectProperty<AxisOrder> axisOrderProperty()
+	{
+		return this.axisOrder;
+	}
+
+	private String getChannelSourceName(String base, long channelMin, long channelMax, long numChannels, boolean revertChannels)
+	{
+		LOG.debug("Getting channel source name for {} {} {} {} {}", base, channelMin, channelMax, numChannels, revertChannels);
+		final String pattern = "%s-%d-%d";
+		final String name = revertChannels
+				? String.format(pattern, base, numChannels - channelMin - 1, numChannels - channelMax - 1)
+				: String.format(pattern, base, channelMin, channelMax);
+		LOG.debug("Name={}", name);
+		return name;
 	}
 }

@@ -19,6 +19,8 @@ import org.janelia.saalfeldlab.paintera.data.n5.N5HDF5Meta;
 import org.janelia.saalfeldlab.paintera.data.n5.VolatileWithSet;
 import org.janelia.saalfeldlab.paintera.state.ChannelSourceState;
 import org.janelia.saalfeldlab.paintera.state.RawSourceState;
+import org.janelia.saalfeldlab.util.n5.N5Data;
+import org.janelia.saalfeldlab.util.n5.N5Helpers;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -48,31 +50,36 @@ public class PainteraTestMultiChannel extends Application {
 		N5ChannelDataSource<FloatType, VolatileFloatType> source = N5ChannelDataSource.zeroExtended(
 				meta,
 				transform,
-				viewer.baseView.getQueue(),
+				viewer.baseView.getGlobalCache(),
 				"ground truth",
 				0,
 				3,
 				0,
-				2);
+				2,
+				false);
 
 		N5ChannelDataSource<FloatType, VolatileFloatType> predictionSource = N5ChannelDataSource.zeroExtended(
 				new N5HDF5Meta(path, prediction, new int[] {64, 64, 64, 3}, true),
 				N5Helpers.getTransform(meta.reader(), prediction, true),
-				viewer.baseView.getQueue(),
+				viewer.baseView.getGlobalCache(),
 				"prediction",
 				0,
 				3,
 				0,
-				2);
+				2,
+				false);
 
 		final long numChannels = source.numChannels();
 		LOG.info("num channels: {}", numChannels);
 
 
-		DataSource<FloatType, VolatileFloatType> rawSource = N5Helpers.openRawAsSource(
+		DataSource<FloatType, VolatileFloatType> rawSource = N5Data.openRawAsSource(
 				meta.reader(),
 				raw,
-				N5Helpers.getTransform(meta.reader(), raw, true), viewer.baseView.getQueue(), 0, "raw");
+				N5Helpers.getTransform(meta.reader(), raw, true),
+				viewer.baseView.getGlobalCache(),
+				0,
+				"raw");
 		RawSourceState<FloatType, VolatileFloatType> rawState = new RawSourceState<>(
 				rawSource,
 				new ARGBColorConverter.Imp0<>(),

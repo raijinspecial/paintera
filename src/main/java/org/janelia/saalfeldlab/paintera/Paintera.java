@@ -3,15 +3,12 @@ package org.janelia.saalfeldlab.paintera;
 import java.io.File;
 import java.io.IOException;
 import java.lang.invoke.MethodHandles;
-import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
-import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.regex.Pattern;
 import java.util.stream.IntStream;
-import java.util.stream.Stream;
 
 import bdv.viewer.ViewerOptions;
 import com.google.gson.GsonBuilder;
@@ -46,17 +43,20 @@ import org.janelia.saalfeldlab.paintera.composition.CompositeCopy;
 import org.janelia.saalfeldlab.paintera.config.CoordinateConfigNode;
 import org.janelia.saalfeldlab.paintera.config.NavigationConfigNode;
 import org.janelia.saalfeldlab.paintera.config.OrthoSliceConfig;
+import org.janelia.saalfeldlab.paintera.config.ScreenScalesConfig;
 import org.janelia.saalfeldlab.paintera.control.CommitChanges;
 import org.janelia.saalfeldlab.paintera.control.assignment.FragmentSegmentAssignmentState;
 import org.janelia.saalfeldlab.paintera.control.assignment.UnableToPersist;
 import org.janelia.saalfeldlab.paintera.control.lock.LockedSegmentsOnlyLocal;
 import org.janelia.saalfeldlab.paintera.control.selection.SelectedIds;
 import org.janelia.saalfeldlab.paintera.data.DataSource;
-import org.janelia.saalfeldlab.paintera.data.mask.CannotPersist;
+import org.janelia.saalfeldlab.paintera.data.axisorder.AxisOrder;
+import org.janelia.saalfeldlab.paintera.data.mask.exception.CannotPersist;
 import org.janelia.saalfeldlab.paintera.data.mask.Masks;
 import org.janelia.saalfeldlab.paintera.data.n5.CommitCanvasN5;
 import org.janelia.saalfeldlab.paintera.id.IdService;
 import org.janelia.saalfeldlab.paintera.meshes.InterruptibleFunction;
+import org.janelia.saalfeldlab.paintera.meshes.MeshManagerWithAssignmentForSegments;
 import org.janelia.saalfeldlab.paintera.serialization.GsonHelpers;
 import org.janelia.saalfeldlab.paintera.serialization.Properties;
 import org.janelia.saalfeldlab.paintera.state.LabelSourceState;
@@ -66,6 +66,8 @@ import org.janelia.saalfeldlab.paintera.stream.HighlightingStreamConverter;
 import org.janelia.saalfeldlab.paintera.stream.ModalGoldenAngleSaturatedHighlightingARGBStream;
 import org.janelia.saalfeldlab.paintera.viewer3d.Viewer3DFX;
 import org.janelia.saalfeldlab.util.MakeUnchecked;
+import org.janelia.saalfeldlab.util.n5.N5Data;
+import org.janelia.saalfeldlab.util.n5.N5Helpers;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import picocli.CommandLine;
@@ -144,9 +146,6 @@ public class Paintera extends Application
 			return;
 		}
 
-		final double[] screenScales = painteraArgs.screenScales();
-		LOG.debug("Using screen scales {}", screenScales);
-
 		final String projectDir = Optional
 				.ofNullable(painteraArgs.project())
 				.orElseGet(MakeUnchecked.supplier(() -> new ProjectDirectoryNotSpecifiedDialog(painteraArgs
@@ -161,7 +160,7 @@ public class Paintera extends Application
 
 		final PainteraBaseView baseView = new PainteraBaseView(
 				PainteraBaseView.reasonableNumFetcherThreads(),
-				ViewerOptions.options().screenScales(screenScales),
+				ViewerOptions.options().screenScales(ScreenScalesConfig.defaultScreenScalesCopy()),
 				si -> s -> si.getState(s).interpolationProperty().get()
 		);
 
@@ -227,6 +226,12 @@ public class Paintera extends Application
 				paneWithStatus.orthoSlices().get(baseView.orthogonalViews().topRight()),
 				paneWithStatus.orthoSlices().get(baseView.orthogonalViews().bottomLeft())
 		                                        );
+
+		paneWithStatus.screenScalesConfigNode().bind(properties.screenScalesConfig);
+		properties.screenScalesConfig.screenScalesProperty().addListener((obs, oldv, newv) -> baseView.orthogonalViews().setScreenScales(newv.getScalesCopy()));
+		baseView.orthogonalViews().setScreenScales(properties.screenScalesConfig.screenScalesProperty().get().getScalesCopy());
+		if (painteraArgs.wereScreenScalesProvided())
+			properties.screenScalesConfig.screenScalesProperty().set(new ScreenScalesConfig.ScreenScales(painteraArgs.screenScales()));
 
 		paneWithStatus.navigationConfigNode().bind(properties.navigationConfig);
 		properties.navigationConfig.bindNavigationToConfig(defaultHandlers.navigation());
@@ -406,11 +411,11 @@ public class Paintera extends Application
 				final String   dataset = split[1];
 				final String   name    = N5Helpers.lastSegmentOfDatasetPath(dataset);
 
-				final DataSource<D, T> source = N5Helpers.openRawAsSource(
+				final DataSource<D, T> source = N5Data.openRawAsSource(
 						reader,
 						dataset,
 						N5Helpers.getTransform(reader, dataset),
-						pbv.getQueue(),
+						pbv.getGlobalCache(),
 						0,
 						name
 				                                                         );
@@ -430,7 +435,7 @@ public class Paintera extends Application
 			}
 		}
 
-		LOG.warn("Unable to generate raw source from {}", identifier);
+		LOG.debug("Unable to generate raw source from {}", identifier);
 		return Optional.empty();
 	}
 
@@ -479,7 +484,7 @@ public class Paintera extends Application
 				final String[] split   = identifier.replaceFirst("file://", "").split(":");
 				final N5Writer n5      = N5Helpers.n5Writer(split[0], 64, 64, 64);
 				final String   dataset = split[1];
-				LOG.warn("Adding label dataset={} dataset={}", split[0], dataset);
+				LOG.debug("Adding label dataset={} dataset={}", split[0], dataset);
 				final double[]                       resolution     = N5Helpers.getResolution(n5, dataset);
 				final double[]                       offset         = N5Helpers.getOffset(n5, dataset);
 				final AffineTransform3D              transform      = N5Helpers.fromResolutionAndOffset(
@@ -500,11 +505,11 @@ public class Paintera extends Application
 						assignment,
 						lockedSegments
 				);
-				final DataSource<D, T> dataSource = N5Helpers.openAsLabelSource(
+				final DataSource<D, T> dataSource = N5Data.openAsLabelSource(
 						n5,
 						dataset,
 						transform,
-						pbv.getQueue(),
+						pbv.getGlobalCache(),
 						0,
 						name
 				                                                               );
@@ -523,6 +528,16 @@ public class Paintera extends Application
 						.range(0, maskedSource.getNumMipmapLevels())
 						.mapToObj(level -> InterruptibleFunction.fromFunction( MakeUnchecked.function( (MakeUnchecked.CheckedFunction<Long, Interval[]>) id -> lookup.read(level, id))))
 						.toArray(InterruptibleFunction[]::new);
+				final MeshManagerWithAssignmentForSegments meshManager = MeshManagerWithAssignmentForSegments.fromBlockLookup(
+						maskedSource,
+						selectedIds,
+						assignment,
+						stream,
+						pbv.viewer3D().meshesGroup(),
+						blockLoaders,
+						pbv.getGlobalCache()::createNewCache,
+						pbv.getMeshManagerExecutorService(),
+						pbv.getMeshWorkerExecutorService());
 
 				final LabelSourceState<D, T> state = new LabelSourceState<>(
 						maskedSource,
@@ -533,11 +548,7 @@ public class Paintera extends Application
 						lockedSegments,
 						idService,
 						selectedIds,
-						pbv.viewer3D().meshesGroup(),
-						blockLoaders,
-						pbv.getMeshManagerExecutorService(),
-						pbv.getMeshWorkerExecutorService()
-				);
+						meshManager);
 				pbv.addLabelSource(state);
 			} catch (final Exception e)
 			{

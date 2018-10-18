@@ -34,7 +34,8 @@ import net.imglib2.type.numeric.integer.UnsignedLongType;
 import net.imglib2.util.AccessBoxRandomAccessibleOnGet;
 import net.imglib2.view.MixedTransformView;
 import net.imglib2.view.Views;
-import org.janelia.saalfeldlab.paintera.data.mask.MaskInUse;
+import org.janelia.saalfeldlab.paintera.data.mask.Mask;
+import org.janelia.saalfeldlab.paintera.data.mask.exception.MaskInUse;
 import org.janelia.saalfeldlab.paintera.data.mask.MaskInfo;
 import org.janelia.saalfeldlab.paintera.data.mask.MaskedSource;
 import org.janelia.saalfeldlab.paintera.state.LabelSourceState;
@@ -84,13 +85,13 @@ public class FloodFill2D
 	{
 		if (sourceInfo.currentSourceProperty().get() == null)
 		{
-			LOG.warn("No current source selected -- will not fill");
+			LOG.info("No current source selected -- will not fill");
 			return;
 		}
 		final Long fill = fillSupplier.get();
 		if (fill == null)
 		{
-			LOG.warn("Received invalid label {} -- will not fill.", fill);
+			LOG.info("Received invalid label {} -- will not fill.", fill);
 			return;
 		}
 		fillAt(x, y, fill);
@@ -102,7 +103,7 @@ public class FloodFill2D
 		final ViewerState viewerState   = viewer.getState();
 		if (currentSource == null)
 		{
-			LOG.warn("No current source selected -- will not fill");
+			LOG.info("No current source selected -- will not fill");
 			return;
 		}
 
@@ -112,7 +113,7 @@ public class FloodFill2D
 
 		if (!(currentSourceState instanceof LabelSourceState<?, ?>))
 		{
-			LOG.warn("Selected source is not a label source -- will not fill");
+			LOG.info("Selected source is not a label source -- will not fill");
 			return;
 		}
 
@@ -120,20 +121,20 @@ public class FloodFill2D
 
 		if (!state.isVisibleProperty().get())
 		{
-			LOG.warn("Selected source is not visible -- will not fill");
+			LOG.info("Selected source is not visible -- will not fill");
 			return;
 		}
 
 		if (!(currentSource instanceof MaskedSource<?, ?>))
 		{
-			LOG.warn("Selected source is not painting-enabled -- will not fill");
+			LOG.info("Selected source is not painting-enabled -- will not fill");
 			return;
 		}
 
 		final LongFunction<Converter<T, BoolType>> maskForLabel = state.maskForLabel();
 		if (maskForLabel == null)
 		{
-			LOG.warn("Cannot generate boolean mask for this source -- will not fill");
+			LOG.info("Cannot generate boolean mask for this source -- will not fill");
 			return;
 		}
 
@@ -143,7 +144,7 @@ public class FloodFill2D
 
 		if (!(t instanceof RealType<?>) && !(t instanceof LabelMultisetType))
 		{
-			LOG.warn("Data type is not real or LabelMultisetType type -- will not fill");
+			LOG.debug("Data type is not real or LabelMultisetType type -- will not fill");
 			return;
 		}
 
@@ -169,12 +170,9 @@ public class FloodFill2D
 		scene.setCursor(Cursor.WAIT);
 		try
 		{
-			final RandomAccessibleInterval<UnsignedLongType> mask      = source.generateMask(
-					maskInfo,
-					FOREGROUND_CHECK
-			                                                                                );
+			final Mask<UnsignedLongType> mask = source.generateMask(maskInfo, FOREGROUND_CHECK);
 			final long                                       seedLabel = access.get().getIntegerLong();
-			LOG.warn("Got seed label {}", seedLabel);
+			LOG.debug("Got seed label {}", seedLabel);
 			final RandomAccessibleInterval<BoolType> relevantBackground = Converters.convert(
 					background,
 					(src, tgt) -> tgt.set(src.getIntegerLong() == seedLabel),
@@ -182,14 +180,10 @@ public class FloodFill2D
 			                                                                                );
 			final RandomAccessible<BoolType> extended = Views.extendValue(relevantBackground, new BoolType(false));
 
-			final int fillNormalAxisInLabelCoordinateSystem = PaintUtils.labelAxisCorrespondingToViewerAxis(
-					labelTransform,
-					viewerTransform,
-					2
-			                                                                                               );
+			final int fillNormalAxisInLabelCoordinateSystem = PaintUtils.labelAxisCorrespondingToViewerAxis(labelTransform, viewerTransform, 2);
 			final AccessBoxRandomAccessibleOnGet<UnsignedLongType> accessTracker = new
 					AccessBoxRandomAccessibleOnGet<>(
-					Views.extendValue(mask, new UnsignedLongType(1l)));
+					Views.extendValue(mask.mask, new UnsignedLongType(1l)));
 			accessTracker.initAccessBox();
 
 			if (fillNormalAxisInLabelCoordinateSystem < 0)
@@ -262,7 +256,7 @@ public class FloodFill2D
 
 		} catch (final MaskInUse e)
 		{
-			LOG.warn(e.getMessage());
+			LOG.debug(e.getMessage());
 			return;
 		} finally
 		{

@@ -1,12 +1,5 @@
 package org.janelia.saalfeldlab.paintera.ui.dialogs.create;
 
-import java.io.IOException;
-import java.util.Arrays;
-import java.util.Optional;
-import java.util.function.Consumer;
-import java.util.function.Supplier;
-import java.util.stream.IntStream;
-
 import bdv.viewer.Source;
 import javafx.util.Pair;
 import net.imglib2.Interval;
@@ -15,7 +8,6 @@ import net.imglib2.type.label.LabelMultisetType;
 import net.imglib2.type.label.VolatileLabelMultisetType;
 import org.janelia.saalfeldlab.labels.blocks.LabelBlockLookup;
 import org.janelia.saalfeldlab.n5.N5FSReader;
-import org.janelia.saalfeldlab.paintera.N5Helpers;
 import org.janelia.saalfeldlab.paintera.PainteraBaseView;
 import org.janelia.saalfeldlab.paintera.composition.ARGBCompositeAlphaYCbCr;
 import org.janelia.saalfeldlab.paintera.control.assignment.FragmentSegmentAssignmentState;
@@ -26,13 +18,20 @@ import org.janelia.saalfeldlab.paintera.data.mask.Masks;
 import org.janelia.saalfeldlab.paintera.data.n5.CommitCanvasN5;
 import org.janelia.saalfeldlab.paintera.data.n5.N5DataSource;
 import org.janelia.saalfeldlab.paintera.data.n5.N5FSMeta;
-import org.janelia.saalfeldlab.paintera.data.n5.ReflectionException;
 import org.janelia.saalfeldlab.paintera.id.IdService;
 import org.janelia.saalfeldlab.paintera.meshes.InterruptibleFunction;
+import org.janelia.saalfeldlab.paintera.meshes.MeshManagerWithAssignmentForSegments;
 import org.janelia.saalfeldlab.paintera.state.LabelSourceState;
 import org.janelia.saalfeldlab.paintera.stream.HighlightingStreamConverter;
 import org.janelia.saalfeldlab.paintera.stream.ModalGoldenAngleSaturatedHighlightingARGBStream;
 import org.janelia.saalfeldlab.util.MakeUnchecked;
+import org.janelia.saalfeldlab.util.n5.N5Helpers;
+
+import java.io.IOException;
+import java.util.Optional;
+import java.util.function.Consumer;
+import java.util.function.Supplier;
+import java.util.stream.IntStream;
 
 public class CreateDatasetHandler
 {
@@ -57,9 +56,7 @@ public class CreateDatasetHandler
 			final PainteraBaseView pbv,
 			final String projecDirectory,
 			final Source<?> currentSource,
-			final Source<?>... allSources
-	                                              ) throws IOException, ReflectionException
-	{
+			final Source<?>... allSources) throws IOException {
 		final CreateDataset                    cd          = new CreateDataset(currentSource, allSources);
 		final Optional<Pair<N5FSMeta, String>> metaAndName = cd.showDialog();
 		if (metaAndName.isPresent())
@@ -73,7 +70,7 @@ public class CreateDatasetHandler
 			final DataSource<LabelMultisetType, VolatileLabelMultisetType> source = new N5DataSource<>(
 					meta,
 					transform,
-					pbv.getQueue(),
+					pbv.getGlobalCache(),
 					name,
 					0
 			);
@@ -103,12 +100,21 @@ public class CreateDatasetHandler
 			ModalGoldenAngleSaturatedHighlightingARGBStream stream = new ModalGoldenAngleSaturatedHighlightingARGBStream(
 					selectedIds,
 					assignment,
-					lockedSegments
-			);
+					lockedSegments);
 			final HighlightingStreamConverter<VolatileLabelMultisetType> converter = HighlightingStreamConverter.forType(
 					stream,
-					new VolatileLabelMultisetType()
-			                                                                                                      );
+					new VolatileLabelMultisetType());
+
+			final MeshManagerWithAssignmentForSegments meshManager = MeshManagerWithAssignmentForSegments.fromBlockLookup(
+					maskedSource,
+					selectedIds,
+					assignment,
+					stream,
+					pbv.viewer3D().meshesGroup(),
+					blockLoaders,
+					pbv.getGlobalCache()::createNewCache,
+					pbv.getMeshManagerExecutorService(),
+					pbv.getMeshWorkerExecutorService());
 
 			LabelSourceState<LabelMultisetType, VolatileLabelMultisetType> state = new LabelSourceState<>(
 					maskedSource,
@@ -119,11 +125,7 @@ public class CreateDatasetHandler
 					lockedSegments,
 					idService,
 					selectedIds,
-					pbv.viewer3D().meshesGroup(),
-					blockLoaders,
-					pbv.getMeshManagerExecutorService(),
-					pbv.getMeshWorkerExecutorService()
-			);
+					meshManager);
 
 			pbv.addLabelSource(state);
 		}

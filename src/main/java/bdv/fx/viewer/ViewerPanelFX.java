@@ -29,17 +29,6 @@
  */
 package bdv.fx.viewer;
 
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.List;
-import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ThreadFactory;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.function.Function;
-import java.util.stream.Collectors;
-
 import bdv.cache.CacheControl;
 import bdv.viewer.Interpolation;
 import bdv.viewer.RequestRepaint;
@@ -61,8 +50,22 @@ import net.imglib2.RealLocalizable;
 import net.imglib2.RealPoint;
 import net.imglib2.RealPositionable;
 import net.imglib2.realtransform.AffineTransform3D;
-import net.imglib2.ui.PainterThread;
 import net.imglib2.ui.TransformListener;
+import org.janelia.saalfeldlab.paintera.data.axisorder.AxisOrder;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.lang.invoke.MethodHandles;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 /**
  * A JPanel for viewing multiple of {@link Source}s. The panel contains a {@link InteractiveDisplayPaneComponent canvas}
@@ -80,16 +83,18 @@ public class ViewerPanelFX
 		           PainterThread.Paintable,
 		           RequestRepaint
 {
+
+	private static final Logger LOG = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 	/**
 	 * Currently rendered state (visible sources, transformation, timepoint, etc.) A copy can be obtained by {@link
 	 * #getState()}.
 	 */
-	protected final ViewerState state = new ViewerState();
+	protected final ViewerState state;
 
 	/**
 	 * Renders the current state for the {@link #display}.
 	 */
-	protected final MultiResolutionRendererFX imageRenderer;
+	protected MultiResolutionRendererFX imageRenderer;
 
 	/**
 	 * TODO
@@ -137,11 +142,6 @@ public class ViewerPanelFX
 	 */
 	protected final CopyOnWriteArrayList<TransformListener<AffineTransform3D>> lastRenderTransformListeners;
 
-	/**
-	 * These listeners will be notified about changes to the current timepoint {@link
-	 * ViewerState#getCurrentTimepoint()}. This is done <em>before</em> calling {@link #requestRepaint()} so listeners
-	 * have the chance to interfere.
-	 */
 	protected final ViewerOptions.Values options;
 
 	protected final SimpleDoubleProperty mouseX = new SimpleDoubleProperty();
@@ -152,13 +152,16 @@ public class ViewerPanelFX
 
 	private final Function<Source<?>, Interpolation> interpolation;
 
+	private final CacheControl cacheControl;
+
 	public ViewerPanelFX(
 			final List<SourceAndConverter<?>> sources,
+			final Function<Source<?>, AxisOrder> axisOrder,
 			final int numTimePoints,
 			final CacheControl cacheControl,
 			final Function<Source<?>, Interpolation> interpolation)
 	{
-		this(sources, numTimePoints, cacheControl, ViewerOptions.options(), interpolation);
+		this(sources, axisOrder, numTimePoints, cacheControl, ViewerOptions.options(), interpolation);
 	}
 
 	/**
@@ -167,10 +170,13 @@ public class ViewerPanelFX
 	 * @param optional
 	 * 		optional parameters. See {@link ViewerOptions#options()}.
 	 */
-	public ViewerPanelFX(final CacheControl cacheControl, final ViewerOptions optional, final Function<Source<?>,
-			Interpolation> interpolation)
+	public ViewerPanelFX(
+			final Function<Source<?>, AxisOrder> axisOrder,
+			final CacheControl cacheControl,
+			final ViewerOptions optional,
+			final Function<Source<?>, Interpolation> interpolation)
 	{
-		this(1, cacheControl, optional, interpolation);
+		this(axisOrder, 1, cacheControl, optional, interpolation);
 	}
 
 	/**
@@ -181,10 +187,14 @@ public class ViewerPanelFX
 	 * @param optional
 	 * 		optional parameters. See {@link ViewerOptions#options()}.
 	 */
-	public ViewerPanelFX(final int numTimepoints, final CacheControl cacheControl, final ViewerOptions optional,
-	                     final Function<Source<?>, Interpolation> interpolation)
+	public ViewerPanelFX(
+			final Function<Source<?>, AxisOrder> axisOrder,
+			final int numTimepoints,
+			final CacheControl cacheControl,
+			final ViewerOptions optional,
+			final Function<Source<?>, Interpolation> interpolation)
 	{
-		this(new ArrayList<>(), numTimepoints, cacheControl, optional, interpolation);
+		this(new ArrayList<>(), axisOrder, numTimepoints, cacheControl, optional, interpolation);
 	}
 
 	/**
@@ -199,15 +209,19 @@ public class ViewerPanelFX
 	 */
 	public ViewerPanelFX(
 			final List<SourceAndConverter<?>> sources,
+			final Function<Source<?>, AxisOrder> axisOrder,
 			final int numTimepoints,
 			final CacheControl cacheControl,
 			final ViewerOptions optional,
 			final Function<Source<?>, Interpolation> interpolation)
 	{
 		super();
+		this.cacheControl = cacheControl;
 		options = optional.values;
 		setWidth(options.getWidth());
 		setHeight(options.getHeight());
+
+		this.state = new ViewerState(axisOrder);
 
 		state.numTimepoints.set(numTimepoints);
 
@@ -224,10 +238,9 @@ public class ViewerPanelFX
 		renderTarget.setCanvasSize(options.getWidth(), options.getHeight());
 		display.addOverlayRenderer(this);
 
-		renderingExecutorService = Executors.newFixedThreadPool(
-				options.getNumRenderingThreads(),
-				new RenderThreadFactory()
-		                                                       );
+		LOG.debug("Using {} rendering threads for panel {}.", options.getNumRenderingThreads(), panelNumber);
+		renderingExecutorService = Executors.newFixedThreadPool(options.getNumRenderingThreads(), new RenderThreadFactory());
+
 		imageRenderer = new MultiResolutionRendererFX(
 				renderTarget,
 				painterThread,
@@ -433,6 +446,7 @@ public class ViewerPanelFX
 
 		imageRenderer.paint(
 				sources,
+				state::axisOrder,
 				timepoint,
 				viewerTransform,
 				interpolation,
@@ -632,12 +646,15 @@ public class ViewerPanelFX
 
 	protected class RenderThreadFactory implements ThreadFactory
 	{
-		private final String threadNameFormat = String.format(
-				"bdv-panel-%d-thread-%%d",
-				panelNumber.getAndIncrement()
-		                                                     );
+		private final String threadNameFormat;
 
 		private final AtomicInteger threadNumber = new AtomicInteger(1);
+
+		public RenderThreadFactory()
+		{
+			this.threadNameFormat = String.format("viewer-panel-fx-%d-thread-%%d", panelNumber.getAndIncrement());
+			LOG.debug("Created {} with format {}", getClass().getSimpleName(), threadNameFormat);
+		}
 
 		@Override
 		public Thread newThread(final Runnable r)
@@ -646,8 +663,9 @@ public class ViewerPanelFX
 					String.format(threadNameFormat, threadNumber.getAndIncrement()),
 					0
 			);
-			if (t.isDaemon())
-				t.setDaemon(false);
+			LOG.debug("Creating thread with name {}", t.getName());
+			if (!t.isDaemon())
+				t.setDaemon(true);
 			if (t.getPriority() != Thread.NORM_PRIORITY)
 				t.setPriority(Thread.NORM_PRIORITY);
 			return t;
@@ -693,6 +711,12 @@ public class ViewerPanelFX
 	public ReadOnlyDoubleProperty mouseYProperty()
 	{
 		return ReadOnlyDoubleProperty.readOnlyDoubleProperty(mouseY);
+	}
+
+	public void setScreenScales(double[] screenScales)
+	{
+		LOG.debug("Setting screen scales to {}", screenScales);
+		this.imageRenderer.setScreenScales(screenScales.clone());
 	}
 
 }

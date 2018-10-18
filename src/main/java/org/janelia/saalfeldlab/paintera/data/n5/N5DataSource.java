@@ -3,11 +3,9 @@ package org.janelia.saalfeldlab.paintera.data.n5;
 import java.io.IOException;
 import java.util.function.Function;
 
-import bdv.util.volatiles.SharedQueue;
 import bdv.viewer.Interpolation;
 import com.google.gson.annotations.Expose;
 import net.imglib2.RandomAccessible;
-import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.Volatile;
 import net.imglib2.interpolation.InterpolatorFactory;
 import net.imglib2.interpolation.randomaccess.NLinearInterpolatorFactory;
@@ -15,11 +13,14 @@ import net.imglib2.interpolation.randomaccess.NearestNeighborInterpolatorFactory
 import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.type.NativeType;
 import net.imglib2.type.numeric.RealType;
-import net.imglib2.util.Triple;
 import org.janelia.saalfeldlab.n5.N5Reader;
 import org.janelia.saalfeldlab.n5.N5Writer;
-import org.janelia.saalfeldlab.paintera.N5Helpers;
+import org.janelia.saalfeldlab.util.n5.ImagesWithInvalidate;
+import org.janelia.saalfeldlab.util.n5.N5Data;
+import org.janelia.saalfeldlab.util.n5.N5Helpers;
+import org.janelia.saalfeldlab.paintera.cache.global.GlobalCache;
 import org.janelia.saalfeldlab.paintera.data.RandomAccessibleIntervalDataSource;
+import org.janelia.saalfeldlab.util.n5.N5Types;
 
 public class N5DataSource<D extends NativeType<D>, T extends Volatile<D> & NativeType<T>>
 		extends RandomAccessibleIntervalDataSource<D, T>
@@ -31,14 +32,13 @@ public class N5DataSource<D extends NativeType<D>, T extends Volatile<D> & Nativ
 	public N5DataSource(
 			final N5Meta meta,
 			final AffineTransform3D transform,
-			final SharedQueue sharedQueue,
+			final GlobalCache globalCache,
 			final String name,
-			final int priority) throws IOException
-	{
+			final int priority) throws IOException {
 		this(
 				meta,
 				transform,
-				sharedQueue,
+				globalCache,
 				name,
 				priority,
 				interpolation(meta.reader(), meta.dataset()),
@@ -49,15 +49,14 @@ public class N5DataSource<D extends NativeType<D>, T extends Volatile<D> & Nativ
 	public N5DataSource(
 			final N5Meta meta,
 			final AffineTransform3D transform,
-			final SharedQueue sharedQueue,
+			final GlobalCache globalCache,
 			final String name,
 			final int priority,
 			final Function<Interpolation, InterpolatorFactory<D, RandomAccessible<D>>> dataInterpolation,
 			final Function<Interpolation, InterpolatorFactory<T, RandomAccessible<T>>> interpolation) throws
-			IOException
-	{
+			IOException {
 		super(
-				getData(meta.reader(), meta.dataset(), transform, sharedQueue, priority),
+				RandomAccessibleIntervalDataSource.asDataWithInvalidate((ImagesWithInvalidate<D, T>[])getData(meta.reader(), meta.dataset(), transform, globalCache, priority)),
 				dataInterpolation,
 				interpolation,
 				name
@@ -90,7 +89,7 @@ public class N5DataSource<D extends NativeType<D>, T extends Volatile<D> & Nativ
 	interpolation(final N5Reader n5, final String dataset)
 	throws IOException
 	{
-		return N5Helpers.isLabelMultisetType(n5, dataset)
+		return N5Types.isLabelMultisetType(n5, dataset)
 		       ? i -> new NearestNeighborInterpolatorFactory<>()
 		       : (Function) realTypeInterpolation();
 	}
@@ -105,43 +104,41 @@ public class N5DataSource<D extends NativeType<D>, T extends Volatile<D> & Nativ
 
 	@SuppressWarnings({"unchecked", "rawtypes"})
 	private static <D extends NativeType<D>, T extends Volatile<D> & NativeType<T>>
-	Triple<RandomAccessibleInterval<D>[], RandomAccessibleInterval<T>[], AffineTransform3D[]> getData(
+	ImagesWithInvalidate<D, T>[] getData(
 			final N5Reader reader,
 			final String dataset,
 			final AffineTransform3D transform,
-			final SharedQueue sharedQueue,
+			final GlobalCache globalCache,
 			final int priority) throws IOException
 	{
 		if (N5Helpers.isPainteraDataset(reader, dataset))
 		{
-			return getData(reader, dataset + "/" + N5Helpers.PAINTERA_DATA_DATASET, transform, sharedQueue, priority);
+			return getData(reader, dataset + "/" + N5Helpers.PAINTERA_DATA_DATASET, transform, globalCache, priority);
 		}
 		final boolean isMultiscale = N5Helpers.isMultiScale(reader, dataset);
-		final boolean isLabelMultiset = N5Helpers.isLabelMultisetType(reader, dataset, isMultiscale);
+		final boolean isLabelMultiset = N5Types.isLabelMultisetType(reader, dataset, isMultiscale);
 
 		if (isLabelMultiset)
 		{
 			return isMultiscale
-			       ? (Triple) N5Helpers.openLabelMultisetMultiscale(reader, dataset, transform, sharedQueue, priority)
-			       : (Triple) N5Helpers.asArrayTriple(N5Helpers.openLabelMutliset(
+			       ? (ImagesWithInvalidate[]) N5Data.openLabelMultisetMultiscale(reader, dataset, transform, globalCache, priority)
+			       : new ImagesWithInvalidate[] {N5Data.openLabelMultiset(
 					       reader,
 					       dataset,
 					       transform,
-					       sharedQueue,
-					       priority
-			                                                                     ));
+					       globalCache,
+					       priority)};
 		}
 		else
 		{
 			return isMultiscale
-			       ? (Triple) N5Helpers.openRawMultiscale(reader, dataset, transform, sharedQueue, priority)
-			       : (Triple) N5Helpers.asArrayTriple(N5Helpers.openRaw(
+			       ? N5Data.openRawMultiscale(reader, dataset, transform, globalCache, priority)
+			       : new ImagesWithInvalidate[] {N5Data.openRaw(
 					       reader,
 					       dataset,
 					       transform,
-					       sharedQueue,
-					       priority
-			                                                           ));
+					       globalCache,
+					       priority)};
 		}
 	}
 }

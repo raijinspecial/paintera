@@ -4,13 +4,14 @@ import java.io.IOException;
 import java.lang.invoke.MethodHandles;
 import java.nio.file.Files;
 import java.util.Arrays;
+import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
 import java.util.function.LongFunction;
 
-import bdv.util.volatiles.SharedQueue;
+import bdv.cache.CacheControl;
 import bdv.viewer.Interpolation;
 import bdv.viewer.Source;
 import bdv.viewer.SourceAndConverter;
@@ -21,6 +22,7 @@ import javafx.collections.ObservableList;
 import javafx.scene.layout.Pane;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.Volatile;
+import net.imglib2.cache.LoaderCache;
 import net.imglib2.converter.ARGBColorConverter;
 import net.imglib2.converter.ARGBCompositeColorConverter;
 import net.imglib2.converter.Converter;
@@ -40,6 +42,10 @@ import org.janelia.saalfeldlab.fx.event.MouseTracker;
 import org.janelia.saalfeldlab.fx.ortho.GridConstraintsManager;
 import org.janelia.saalfeldlab.fx.ortho.OrthogonalViews;
 import org.janelia.saalfeldlab.fx.util.InvokeOnJavaFXApplicationThread;
+import org.janelia.saalfeldlab.paintera.cache.DiscoverableMemoryUsage;
+import org.janelia.saalfeldlab.paintera.cache.Invalidate;
+import org.janelia.saalfeldlab.paintera.cache.MemoryBoundedSoftRefLoaderCache;
+import org.janelia.saalfeldlab.paintera.cache.global.GlobalCache;
 import org.janelia.saalfeldlab.paintera.composition.CompositeProjectorPreMultiply;
 import org.janelia.saalfeldlab.paintera.config.CoordinateConfigNode;
 import org.janelia.saalfeldlab.paintera.config.CrosshairConfig;
@@ -48,6 +54,8 @@ import org.janelia.saalfeldlab.paintera.config.NavigationConfigNode;
 import org.janelia.saalfeldlab.paintera.config.OrthoSliceConfig;
 import org.janelia.saalfeldlab.paintera.config.OrthoSliceConfigBase;
 import org.janelia.saalfeldlab.paintera.config.Viewer3DConfig;
+import org.janelia.saalfeldlab.paintera.data.axisorder.AxisOrder;
+import org.janelia.saalfeldlab.paintera.data.axisorder.AxisOrderNotSupported;
 import org.janelia.saalfeldlab.paintera.data.mask.MaskedSource;
 import org.janelia.saalfeldlab.paintera.state.ChannelSourceState;
 import org.janelia.saalfeldlab.paintera.state.GlobalTransformManager;
@@ -67,11 +75,21 @@ public class PainteraBaseView
 
 	private static final Logger LOG = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
+	private static final int DEFAULT_MAX_NUM_CACHE_ENTRIES = 1000;
+
+	// set this absurdly high
+	private static final int MAX_NUM_MIPMAP_LEVELS = 100;
+
 	private final SourceInfo sourceInfo = new SourceInfo();
 
 	private final GlobalTransformManager manager = new GlobalTransformManager();
 
-	private final SharedQueue cacheControl;
+//	private final LoaderCache<GlobalCache.Key<?>, ?> globalBackingCache = new BoundedSoftRefLoaderCache<>(DEFAULT_MAX_NUM_CACHE_ENTRIES);
+
+	// 1GB
+	private final LoaderCache<GlobalCache.Key<?>, ?> globalBackingCache = MemoryBoundedSoftRefLoaderCache.withWeakRefs(Runtime.getRuntime().maxMemory(), DiscoverableMemoryUsage.memoryUsageFromDiscoveredFunctions());
+
+	private final GlobalCache globalCache;
 
 	private final ViewerOptions viewerOptions;
 
@@ -122,7 +140,7 @@ public class PainteraBaseView
 			final Function<SourceInfo, Function<Source<?>, Interpolation>> interpolation)
 	{
 		super();
-		this.cacheControl = new SharedQueue(numFetcherThreads);
+		this.globalCache = new GlobalCache(MAX_NUM_MIPMAP_LEVELS, numFetcherThreads, globalBackingCache, (Invalidate<GlobalCache.Key<?>>)globalBackingCache);
 		this.viewerOptions = viewerOptions
 				.accumulateProjectorFactory(new CompositeProjectorPreMultiply.CompositeProjectorFactory(sourceInfo
 						.composites()))
@@ -132,10 +150,11 @@ public class PainteraBaseView
 				.numRenderingThreads(Math.min(3, Math.max(1, Runtime.getRuntime().availableProcessors() / 3)));
 		this.views = new OrthogonalViews<>(
 				manager,
-				cacheControl,
+				this.globalCache,
 				this.viewerOptions,
 				viewer3D,
-				interpolation.apply(sourceInfo)
+				interpolation.apply(sourceInfo),
+				s -> Optional.ofNullable(sourceInfo.getState(s)).map(SourceState::getAxisOrder).orElse(null)
 		);
 		this.vsacUpdate = change -> views.setAllSources(visibleSourcesAndConverters);
 		visibleSourcesAndConverters.addListener(vsacUpdate);
@@ -194,6 +213,7 @@ public class PainteraBaseView
 		sourceInfo.addState(state);
 
 		state.compositeProperty().addListener(obs -> orthogonalViews().requestRepaint());
+		state.axisOrderProperty().addListener(obs -> orthogonalViews().requestRepaint());
 
 		if (state.getDataSource() instanceof MaskedSource<?, ?>) {
 			final MaskedSource<?, ?> ms = ((MaskedSource<?, ?>) state.getDataSource());
@@ -209,9 +229,7 @@ public class PainteraBaseView
 			double[] offset,
 			double min,
 			double max,
-			String name
-	                                                                                                                                           )
-	{
+			String name) throws AxisOrderNotSupported {
 		RawSourceState<D, T> state = RawSourceState.simpleSourceFromSingleRAI(data, resolution, offset, min, max,
 				name);
 		InvokeOnJavaFXApplicationThread.invoke(() -> addRawSource(state));
@@ -237,19 +255,29 @@ public class PainteraBaseView
 			final double[] resolution,
 			final double[] offset,
 			final long maxId,
-			final String name
-	                                                                                                                                          )
-	{
+			final String name) throws AxisOrderNotSupported {
+		return addSingleScaleLabelSource(data, resolution, offset, AxisOrder.XYZ, maxId, name);
+	}
+
+	public <D extends IntegerType<D> & NativeType<D>, T extends Volatile<D> & IntegerType<T>> LabelSourceState<D, T>
+	addSingleScaleLabelSource(
+			final RandomAccessibleInterval<D> data,
+			final double[] resolution,
+			final double[] offset,
+			AxisOrder axisOrder,
+			final long maxId,
+			final String name) throws AxisOrderNotSupported {
 		LabelSourceState<D, T> state = LabelSourceState.simpleSourceFromSingleRAI(
 				data,
 				resolution,
 				offset,
+				axisOrder,
 				maxId,
 				name,
+				getGlobalCache(),
 				viewer3D().meshesGroup(),
 				meshManagerExecutorService,
-				meshWorkerExecutorService
-		                                                                         );
+				meshWorkerExecutorService);
 		InvokeOnJavaFXApplicationThread.invoke(() -> addLabelSource(state));
 		return state;
 	}
@@ -283,7 +311,7 @@ public class PainteraBaseView
 			final ChannelSourceState<D, T, CT, V> state)
 	{
 		addGenericState(state);
-		LOG.debug("Adding raw state={}", state);
+		LOG.debug("Adding channel state={}", state);
 		final ARGBCompositeColorConverter<T, CT, V> conv = state.converter();
 		for (int channel = 0; channel < conv.numChannels(); ++channel) {
 			conv.colorProperty(channel).addListener((obs, oldv, newv) -> orthogonalViews().requestRepaint());
@@ -292,6 +320,7 @@ public class PainteraBaseView
 			conv.channelAlphaProperty(channel).addListener((obs, oldv, newv) -> orthogonalViews().requestRepaint());
 		}
 		conv.alphaProperty().addListener((obs, oldv, newv) -> orthogonalViews().requestRepaint());
+		LOG.debug("Added channel state {}", state.nameProperty().get());
 	}
 
 	@SuppressWarnings({"unchecked", "rawtypes"})
@@ -397,7 +426,6 @@ public class PainteraBaseView
 		this.orthogonalViews().topLeft().viewer().stop();
 		this.orthogonalViews().topRight().viewer().stop();
 		this.orthogonalViews().bottomLeft().viewer().stop();
-		this.cacheControl.shutdown();
 		LOG.debug("Sent stop requests everywhere");
 	}
 
@@ -406,9 +434,14 @@ public class PainteraBaseView
 		return Math.min(8, Math.max(1, Runtime.getRuntime().availableProcessors() / 2));
 	}
 
-	public SharedQueue getQueue()
+	public CacheControl getCacheControl()
 	{
-		return this.cacheControl;
+		return this.getGlobalCache();
+	}
+
+	public GlobalCache getGlobalCache()
+	{
+		return this.globalCache;
 	}
 
 	public ExecutorService getMeshManagerExecutorService()
@@ -537,6 +570,16 @@ public class PainteraBaseView
 			this.gridConstraintsManager = gridConstraintsManager;
 			this.handlers = handlers;
 		}
+	}
+
+	public long getCurrentMemoryUsageInBytes()
+	{
+		return ((MemoryBoundedSoftRefLoaderCache)this.globalBackingCache).getCurrentMemoryUsageInBytes();
+	}
+
+	public LoaderCache<GlobalCache.Key<?>, ?> getGlobalBackingCache()
+	{
+		return this.globalBackingCache;
 	}
 
 }

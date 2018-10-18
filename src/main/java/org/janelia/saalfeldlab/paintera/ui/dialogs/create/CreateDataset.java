@@ -1,15 +1,5 @@
 package org.janelia.saalfeldlab.paintera.ui.dialogs.create;
 
-import java.io.File;
-import java.io.IOException;
-import java.lang.invoke.MethodHandles;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.List;
-import java.util.Optional;
-
-import bdv.util.volatiles.SharedQueue;
 import bdv.viewer.Source;
 import com.sun.javafx.application.PlatformImpl;
 import javafx.application.Platform;
@@ -39,11 +29,8 @@ import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.img.cell.AbstractCellImg;
 import net.imglib2.img.cell.CellGrid;
 import net.imglib2.realtransform.AffineTransform3D;
-import net.imglib2.type.label.LabelMultisetType;
-import net.imglib2.type.label.VolatileLabelMultisetType;
 import net.imglib2.type.numeric.integer.UnsignedByteType;
 import net.imglib2.type.volatiles.VolatileUnsignedByteType;
-import net.imglib2.util.ValuePair;
 import org.janelia.saalfeldlab.fx.ui.DirectoryField;
 import org.janelia.saalfeldlab.fx.ui.Exceptions;
 import org.janelia.saalfeldlab.fx.ui.NamedNode;
@@ -51,13 +38,24 @@ import org.janelia.saalfeldlab.fx.ui.ObjectField;
 import org.janelia.saalfeldlab.fx.ui.SpatialField;
 import org.janelia.saalfeldlab.n5.N5FSReader;
 import org.janelia.saalfeldlab.n5.N5Reader;
-import org.janelia.saalfeldlab.paintera.N5Helpers;
+import org.janelia.saalfeldlab.paintera.cache.MemoryBoundedSoftRefLoaderCache;
+import org.janelia.saalfeldlab.paintera.cache.global.GlobalCache;
 import org.janelia.saalfeldlab.paintera.data.DataSource;
 import org.janelia.saalfeldlab.paintera.data.n5.N5DataSource;
 import org.janelia.saalfeldlab.paintera.data.n5.N5FSMeta;
 import org.janelia.saalfeldlab.paintera.data.n5.ReflectionException;
+import org.janelia.saalfeldlab.util.n5.N5Data;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import java.io.File;
+import java.io.IOException;
+import java.lang.invoke.MethodHandles;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.List;
+import java.util.Optional;
 
 public class CreateDataset
 {
@@ -196,14 +194,14 @@ public class CreateDataset
 			try
 			{
 
-				LOG.warn("Trying to create empty label dataset `{}' in container `{}'", dataset, container);
+				LOG.debug("Trying to create empty label dataset `{}' in container `{}'", dataset, container);
 
 				if (dataset == null || dataset.equals(""))
 					throw new IOException("Dataset not specified!");
 
 				if (name == null || name.equals(""))
 					throw new IOException("Name not specified!");
-				N5Helpers.createEmptyLabeLDataset(
+				N5Data.createEmptyLabeLDataset(
 						container,
 						dataset,
 						dimensions.getAs(new long[3]),
@@ -215,7 +213,7 @@ public class CreateDataset
 				                                 );
 			} catch (IOException ex)
 			{
-				LOG.warn("Unable to create empty dataset");
+				LOG.error("Unable to create empty dataset", ex);
 				e.consume();
 				Alert exceptionAlert = Exceptions.exceptionAlert(
 						"Paintera",
@@ -275,8 +273,7 @@ public class CreateDataset
 		this.offset.getZ().valueProperty().set(transform.get(2, 3));
 	}
 
-	public static void main(String[] args) throws IOException, ReflectionException
-	{
+	public static void main(String[] args) throws IOException, ReflectionException {
 		PlatformImpl.startup(() -> {
 		});
 
@@ -286,13 +283,14 @@ public class CreateDataset
 				0.0, 5.0, 0.0, 5.0,
 				0.0, 0.0, 40., -1.
 		      );
+		MemoryBoundedSoftRefLoaderCache<GlobalCache.Key<?>, ?, ?> backingCache = MemoryBoundedSoftRefLoaderCache.withWeakRefs(Runtime.getRuntime().maxMemory(), obj -> 0);
 		final N5Reader reader = new N5FSReader(
 				"/home/phil/local/tmp/sample_a_padded_20160501.n5");
-		final DataSource<UnsignedByteType, VolatileUnsignedByteType> raw = N5Helpers.openRawAsSource(
+		final DataSource<UnsignedByteType, VolatileUnsignedByteType> raw = N5Data.openRawAsSource(
 				reader,
 				"volumes/raw/data/s0",
 				tf,
-				new SharedQueue(1, 1),
+				new GlobalCache(10, 1, backingCache, backingCache),
 				1,
 				"NAME"
 		                                                                                            );
@@ -302,7 +300,7 @@ public class CreateDataset
 
 		Platform.runLater(() -> {
 			final Button b = new Button("BUTTON");
-			b.setOnAction(e -> LOG.warn( "Got new dataset meta: {}", cd.showDialog()));
+			b.setOnAction(e -> LOG.info( "Got new dataset meta: {}", cd.showDialog()));
 			final Scene scene = new Scene(b);
 			final Stage stage = new Stage();
 			stage.setScene(scene);

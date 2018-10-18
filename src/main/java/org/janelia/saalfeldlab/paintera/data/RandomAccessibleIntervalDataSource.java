@@ -3,8 +3,11 @@ package org.janelia.saalfeldlab.paintera.data;
 import java.lang.invoke.MethodHandles;
 import java.util.function.Function;
 import java.util.function.Supplier;
+import java.util.stream.Stream;
 
 import bdv.viewer.Interpolation;
+import javafx.beans.property.ObjectProperty;
+import javafx.beans.property.SimpleObjectProperty;
 import mpicbg.spim.data.sequence.VoxelDimensions;
 import net.imglib2.RandomAccessible;
 import net.imglib2.RandomAccessibleInterval;
@@ -15,6 +18,8 @@ import net.imglib2.type.Type;
 import net.imglib2.util.Triple;
 import net.imglib2.util.Util;
 import net.imglib2.view.Views;
+import org.janelia.saalfeldlab.util.n5.ImagesWithInvalidate;
+import org.janelia.saalfeldlab.paintera.cache.InvalidateAll;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -25,9 +30,11 @@ public class RandomAccessibleIntervalDataSource<D extends Type<D>, T extends Typ
 
 	private final AffineTransform3D[] mipmapTransforms;
 
+	private final RandomAccessibleInterval<T>[] sources;
+
 	private final RandomAccessibleInterval<D>[] dataSources;
 
-	private final RandomAccessibleInterval<T>[] sources;
+	private final InvalidateAll invalidateAll;
 
 	private final Function<Interpolation, InterpolatorFactory<D, RandomAccessible<D>>> dataInterpolation;
 
@@ -39,13 +46,38 @@ public class RandomAccessibleIntervalDataSource<D extends Type<D>, T extends Typ
 
 	private final String name;
 
+	public static class DataWithInvalidate<D, T> {
+		public final RandomAccessibleInterval<D>[] data;
+
+		public final RandomAccessibleInterval<T>[] viewData;
+
+		public final AffineTransform3D[] transforms;
+
+		public final InvalidateAll invalidateAll;
+
+		public DataWithInvalidate(RandomAccessibleInterval<D>[] data, RandomAccessibleInterval<T>[] viewData, AffineTransform3D[] transforms, InvalidateAll invalidateAll) {
+			this.data = data;
+			this.viewData = viewData;
+			this.transforms = transforms;
+			this.invalidateAll = invalidateAll;
+		}
+	}
+
 	public RandomAccessibleIntervalDataSource(
-			final Triple<RandomAccessibleInterval<D>[], RandomAccessibleInterval<T>[], AffineTransform3D[]> data,
+			final DataWithInvalidate<D, T> dataWithInvalidate,
 			final Function<Interpolation, InterpolatorFactory<D, RandomAccessible<D>>> dataInterpolation,
 			final Function<Interpolation, InterpolatorFactory<T, RandomAccessible<T>>> interpolation,
-			final String name)
-	{
-		this(data.getA(), data.getB(), data.getC(), dataInterpolation, interpolation, name);
+			final String name) {
+		this(dataWithInvalidate.data, dataWithInvalidate.viewData, dataWithInvalidate.transforms, dataWithInvalidate.invalidateAll, dataInterpolation, interpolation, name);
+	}
+
+	public RandomAccessibleIntervalDataSource(
+			final Triple<RandomAccessibleInterval<D>[], RandomAccessibleInterval<T>[], AffineTransform3D[]> data,
+			final InvalidateAll invalidateAll,
+			final Function<Interpolation, InterpolatorFactory<D, RandomAccessible<D>>> dataInterpolation,
+			final Function<Interpolation, InterpolatorFactory<T, RandomAccessible<T>>> interpolation,
+			final String name) {
+		this(data.getA(), data.getB(), data.getC(), invalidateAll, dataInterpolation, interpolation, name);
 	}
 
 	@SuppressWarnings("unchecked")
@@ -53,14 +85,15 @@ public class RandomAccessibleIntervalDataSource<D extends Type<D>, T extends Typ
 			final RandomAccessibleInterval<D> dataSource,
 			final RandomAccessibleInterval<T> source,
 			final AffineTransform3D mipmapTransform,
+			final InvalidateAll invalidateAll,
 			final Function<Interpolation, InterpolatorFactory<D, RandomAccessible<D>>> dataInterpolation,
 			final Function<Interpolation, InterpolatorFactory<T, RandomAccessible<T>>> interpolation,
-			final String name)
-	{
+			final String name) {
 		this(
 				new RandomAccessibleInterval[] {dataSource},
 				new RandomAccessibleInterval[] {source},
 				new AffineTransform3D[] {mipmapTransform},
+				invalidateAll,
 				dataInterpolation,
 				interpolation,
 				name
@@ -71,14 +104,15 @@ public class RandomAccessibleIntervalDataSource<D extends Type<D>, T extends Typ
 			final RandomAccessibleInterval<D>[] dataSources,
 			final RandomAccessibleInterval<T>[] sources,
 			final AffineTransform3D[] mipmapTransforms,
+			final InvalidateAll invalidateAll,
 			final Function<Interpolation, InterpolatorFactory<D, RandomAccessible<D>>> dataInterpolation,
 			final Function<Interpolation, InterpolatorFactory<T, RandomAccessible<T>>> interpolation,
-			final String name)
-	{
+			final String name) {
 		this(
 				dataSources,
 				sources,
 				mipmapTransforms,
+				invalidateAll,
 				dataInterpolation,
 				interpolation,
 				() -> Util.getTypeFromInterval(dataSources[0]).createVariable(),
@@ -91,21 +125,35 @@ public class RandomAccessibleIntervalDataSource<D extends Type<D>, T extends Typ
 			final RandomAccessibleInterval<D>[] dataSources,
 			final RandomAccessibleInterval<T>[] sources,
 			final AffineTransform3D[] mipmapTransforms,
+			final InvalidateAll invalidateAll,
 			final Function<Interpolation, InterpolatorFactory<D, RandomAccessible<D>>> dataInterpolation,
 			final Function<Interpolation, InterpolatorFactory<T, RandomAccessible<T>>> interpolation,
 			final Supplier<D> dataTypeSupplier,
 			final Supplier<T> typeSupplier,
-			final String name)
-	{
+			final String name) {
 		super();
 		this.mipmapTransforms = mipmapTransforms;
 		this.dataSources = dataSources;
 		this.sources = sources;
+		this.invalidateAll = invalidateAll;
 		this.dataInterpolation = dataInterpolation;
 		this.interpolation = interpolation;
 		this.dataTypeSupplier = dataTypeSupplier;
 		this.typeSupplier = typeSupplier;
 		this.name = name;
+	}
+
+	@SuppressWarnings("unchecked")
+	public static <D, T>
+	RandomAccessibleIntervalDataSource.DataWithInvalidate<D, T> asDataWithInvalidate(
+			final ImagesWithInvalidate<D, T>[] imagesWithInvalidate
+	)
+	{
+		RandomAccessibleInterval<T>[] data = Stream.of(imagesWithInvalidate).map(i -> i.data).toArray(RandomAccessibleInterval[]::new);
+		RandomAccessibleInterval<T>[] vdata = Stream.of(imagesWithInvalidate).map(i -> i.vdata).toArray(RandomAccessibleInterval[]::new);
+		AffineTransform3D[] transforms = Stream.of(imagesWithInvalidate).map(i -> i.transform).toArray(AffineTransform3D[]::new);
+		InvalidateAll invalidateAll = () -> Stream.of(imagesWithInvalidate).forEach( i -> {i.invalidate.invalidateAll(); i.vinvalidate.invalidateAll();});
+		return new RandomAccessibleIntervalDataSource.DataWithInvalidate(data, vdata, transforms, invalidateAll);
 	}
 
 	@Override
@@ -187,12 +235,12 @@ public class RandomAccessibleIntervalDataSource<D extends Type<D>, T extends Typ
 		return dataTypeSupplier.get();
 	}
 
-	public RandomAccessibleIntervalDataSource<D, T> copy()
-	{
+	public RandomAccessibleIntervalDataSource<D, T> copy() {
 		return new RandomAccessibleIntervalDataSource<>(
 				dataSources,
 				sources,
 				mipmapTransforms,
+				invalidateAll,
 				dataInterpolation,
 				interpolation,
 				dataTypeSupplier,
@@ -201,4 +249,8 @@ public class RandomAccessibleIntervalDataSource<D extends Type<D>, T extends Typ
 		);
 	}
 
+	@Override
+	public void invalidateAll() {
+		this.invalidateAll.invalidateAll();
+	}
 }

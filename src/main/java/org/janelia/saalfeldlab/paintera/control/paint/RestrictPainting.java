@@ -30,7 +30,8 @@ import net.imglib2.type.numeric.integer.UnsignedLongType;
 import net.imglib2.util.AccessBoxRandomAccessible;
 import net.imglib2.util.Pair;
 import net.imglib2.view.Views;
-import org.janelia.saalfeldlab.paintera.data.mask.MaskInUse;
+import org.janelia.saalfeldlab.paintera.data.mask.Mask;
+import org.janelia.saalfeldlab.paintera.data.mask.exception.MaskInUse;
 import org.janelia.saalfeldlab.paintera.data.mask.MaskInfo;
 import org.janelia.saalfeldlab.paintera.data.mask.MaskedSource;
 import org.janelia.saalfeldlab.paintera.state.LabelSourceState;
@@ -83,7 +84,7 @@ public class RestrictPainting
 		final ViewerState viewerState   = viewer.getState();
 		if (currentSource == null)
 		{
-			LOG.warn("No current source selected -- will not fill");
+			LOG.info("No current source selected -- will not fill");
 			return;
 		}
 
@@ -91,27 +92,27 @@ public class RestrictPainting
 
 		if (!(currentSourceState instanceof LabelSourceState<?, ?>))
 		{
-			LOG.warn("Not a label source -- will not restrict");
+			LOG.info("Not a label source -- will not restrict");
 			return;
 		}
 		final LabelSourceState<?, ?> state = (LabelSourceState<?, ?>) currentSourceState;
 
 		if (!currentSourceState.isVisibleProperty().get())
 		{
-			LOG.warn("Selected source is not visible -- will not fill");
+			LOG.info("Selected source is not visible -- will not fill");
 			return;
 		}
 
 		if (!(currentSource instanceof MaskedSource<?, ?>))
 		{
-			LOG.warn("Selected source is not painting-enabled -- will not fill");
+			LOG.info("Selected source is not painting-enabled -- will not fill");
 			return;
 		}
 
 		final LongFunction<?> maskGenerator = state.maskForLabel();
 		if (maskGenerator == null)
 		{
-			LOG.warn("Cannot generate boolean mask for this source -- will not fill");
+			LOG.info("Cannot generate boolean mask for this source -- will not fill");
 			return;
 		}
 
@@ -121,7 +122,7 @@ public class RestrictPainting
 
 		if (!(t instanceof RealType<?>) && !(t instanceof LabelMultisetType))
 		{
-			LOG.warn("Data type is not integer type or LabelMultisetType -- will not fill");
+			LOG.info("Data type is not integer type or LabelMultisetType -- will not fill");
 			return;
 		}
 
@@ -152,7 +153,7 @@ public class RestrictPainting
 			}
 		} catch (final MaskInUse e)
 		{
-			LOG.warn("Mask already in use -- will not paint: {}", e.getMessage());
+			LOG.info("Mask already in use -- will not paint: {}", e.getMessage());
 		}
 
 	}
@@ -198,15 +199,9 @@ public class RestrictPainting
 				level,
 				new UnsignedLongType(Label.TRANSPARENT)
 		);
-		final RandomAccessibleInterval<UnsignedLongType>  mask          = source.generateMask(
-				maskInfo,
-				FOREGROUND_CHECK
-		                                                                                     );
+		final Mask<UnsignedLongType> mask = source.generateMask(maskInfo, FOREGROUND_CHECK);
 		final AccessBoxRandomAccessible<UnsignedLongType> accessTracker = new AccessBoxRandomAccessible<>(Views
-				.extendValue(
-				mask,
-				new UnsignedLongType(1)
-		                                                                                                                   ));
+				.extendValue(mask.mask, new UnsignedLongType(1)));
 
 		final RandomAccess<UnsignedLongType> canvasAccess = canvas.randomAccess();
 		canvasAccess.setPosition(seed);
@@ -250,15 +245,9 @@ public class RestrictPainting
 				level,
 				new UnsignedLongType(Label.TRANSPARENT)
 		);
-		final RandomAccessibleInterval<UnsignedLongType>  mask          = source.generateMask(
-				maskInfo,
-				FOREGROUND_CHECK
-		                                                                                     );
+		final Mask<UnsignedLongType> mask = source.generateMask(maskInfo, FOREGROUND_CHECK);
 		final AccessBoxRandomAccessible<UnsignedLongType> accessTracker = new AccessBoxRandomAccessible<>(Views
-				.extendValue(
-				mask,
-				new UnsignedLongType(1)
-		                                                                                                                   ));
+				.extendValue(mask.mask, new UnsignedLongType(1)));
 
 		final RandomAccess<UnsignedLongType> canvasAccess = canvas.randomAccess();
 		canvasAccess.setPosition(seed);
