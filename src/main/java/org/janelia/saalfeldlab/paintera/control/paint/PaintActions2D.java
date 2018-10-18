@@ -152,7 +152,7 @@ public class PaintActions2D
 					new double[] {viewerX - viewerRadius, viewerY - viewerRadius},
 					new double[] {viewerX + viewerRadius, viewerY + viewerRadius}
 			));
-			LOG.warn("repaintRequest for viewer interval ({} {})", Intervals.minAsLongArray(viewerInterval), Intervals.maxAsLongArray(viewerInterval));
+//			LOG.debug("repaintRequest for viewer interval ({} {})", Intervals.minAsLongArray(viewerInterval), Intervals.maxAsLongArray(viewerInterval));
 			repaintRequest.accept(viewerInterval);
 
 		}

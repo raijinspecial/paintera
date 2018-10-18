@@ -67,7 +67,7 @@ import net.imglib2.realtransform.RealViews;
 import net.imglib2.type.numeric.ARGBType;
 import net.imglib2.type.numeric.integer.ByteType;
 import net.imglib2.util.Intervals;
-import net.imglib2.view.Views;
+import org.janelia.saalfeldlab.util.IntervalUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import tmp.bdv.img.cache.VolatileCachedCellImg;
@@ -83,6 +83,7 @@ import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.function.Function;
 import java.util.function.ToIntFunction;
+import java.util.stream.Stream;
 
 /**
  *
@@ -251,7 +252,7 @@ public class MultiResolutionRendererGeneric<T>
 
 	private final ImageGenerator<T> makeImage;
 
-	private Interval renderInterval = null;
+	private List<Interval>[] renderInterval = null;
 
 	/**
 	 * @param display
@@ -355,7 +356,7 @@ public class MultiResolutionRendererGeneric<T>
 						// reuse storage arrays of level 0 (highest resolution)
 						screenImages.get(i).set(b, i == 0
 						                     ? makeImage.create(w, h)
-						                     : makeImage.create(w, h, screenImages.get(0).get(b)));
+						                     : makeImage.create(w, h));//, screenImages.get(0).get(b)));
 						final T bi = screenImages.get(i).get(b);
 						// getBufferedImage.apply( screenImages[ i ][ b ] );
 						bufferedImages.get(i).set(b, bi);
@@ -377,7 +378,8 @@ public class MultiResolutionRendererGeneric<T>
 				screenScaleTransforms[i] = scale;
 			}
 
-			renderInterval = null;
+//			Stream.of(renderInterval).forEach(List::clear);
+//			Stream.of(renderInterval).forEach(l -> l.add(null));
 			return true;
 		}
 		return false;
@@ -413,7 +415,7 @@ public class MultiResolutionRendererGeneric<T>
 		final int h = height.applyAsInt(screenImages.get(0).get(0));
 		final int size = w * h;
 		if (numVisibleSources != renderMaskArrays.length ||
-				numVisibleSources != 0 && renderMaskArrays[0].size() < size)
+				numVisibleSources != 0 && (renderMaskArrays[0] == null || renderMaskArrays[0].size() < size))
 		{
 			renderMaskArrays = new ArrayImg[numVisibleSources];
 			for (int j = 0; j < numVisibleSources; ++j)
@@ -451,6 +453,8 @@ public class MultiResolutionRendererGeneric<T>
 		final boolean createProjector;
 
 		final Interval renderInterval;
+
+		final int renderScreenScaleIndex;
 
 		synchronized (this)
 		{
@@ -494,23 +498,25 @@ public class MultiResolutionRendererGeneric<T>
 				p = projector;
 			}
 
-			final double screenScale = screenScales[currentScreenScaleIndex];
-			if (this.renderInterval == null || screenScale == 1.0)
-				renderInterval = this.renderInterval;
-			else {
-				long[] min = {(long) Math.floor(screenScale * this.renderInterval.min(0)), (long) Math.floor(screenScale * this.renderInterval.min(1))};
-				long[] max = {(long) Math.ceil(screenScale * this.renderInterval.max(0)), (long) Math.ceil(screenScale * this.renderInterval.max(1))};
-				renderInterval = new FinalInterval(min, max);
-				LOG.debug("Set render interval to ({} {})", min, max);
-			}
+			renderScreenScaleIndex = currentScreenScaleIndex;
 
+			final List<Interval> renderIntervals = this.renderInterval[currentScreenScaleIndex];
+			if (renderIntervals.isEmpty())
+				renderInterval = null;
+			else
+				renderInterval = renderIntervals
+						.stream()
+						.map( i -> i == null ? wrapAsArrayImg.apply(screenImages.get(currentScreenScaleIndex).get(0)) : i)
+						.reduce(new FinalInterval(new long[] {Long.MAX_VALUE, Long.MAX_VALUE}, new long[] {Long.MIN_VALUE, Long.MIN_VALUE}), Intervals::union);
+			renderIntervals.clear();
 			requestedScreenScaleIndex = 0;
 		}
 
 		LOG.debug("Projector is of type {}", p.getClass());
-
-		final boolean success    = p.map(renderInterval, createProjector);
-		final long    rendertime = p.getLastFrameRenderNanoTime();
+		if (renderInterval != null)
+			LOG.warn("Projecting for interval ({} {}) ({} {}) at screen scale index {}", renderInterval.min(0), renderInterval.min(1), renderInterval.max(0), renderInterval.max(1), renderScreenScaleIndex);
+		final boolean success    = renderInterval == null || p.map(renderInterval, createProjector);
+		final long    rendertime = renderInterval == null ? 0 : p.getLastFrameRenderNanoTime();
 
 		synchronized (this)
 		{
@@ -541,7 +547,7 @@ public class MultiResolutionRendererGeneric<T>
 				}
 
 				if (currentScreenScaleIndex > 0)
-					requestRepaint(currentScreenScaleIndex - 1, renderInterval);
+					doRequestRepaint(currentScreenScaleIndex - 1);
 				else if (!p.isValid())
 				{
 					try
@@ -552,13 +558,10 @@ public class MultiResolutionRendererGeneric<T>
 						// restore interrupted state
 						Thread.currentThread().interrupt();
 					}
-					requestRepaint(currentScreenScaleIndex, renderInterval);
+//					this.renderInterval[renderScreenScaleIndex].add(renderInterval);
+					doRequestRepaint(currentScreenScaleIndex);
 				}
-				else
-					this.renderInterval = null;
 			}
-			else
-				this.renderInterval = null;
 		}
 
 		return success;
@@ -579,26 +582,29 @@ public class MultiResolutionRendererGeneric<T>
 	 */
 	public synchronized void requestRepaint(final int screenScaleIndex, final Interval interval)
 	{
+		if (interval == null)
+		{
+			LOG.debug("Setting renderInterval to null");
+			for (List<Interval> ri : renderInterval) {
+				ri.clear();
+				ri.add(null);
+			}
+		}
+		else {
+			LOG.debug("Setting renderInterval to union with ({} {})", Intervals.minAsLongArray(interval), Intervals.maxAsLongArray(interval));
+			for (int index = 0; index < screenScales.length; ++index) {
+				this.renderInterval[index].add(scaleInterval2D(interval, screenScales[index]));
+			}
+		}
+		doRequestRepaint(screenScaleIndex);
+	}
+
+	private synchronized void doRequestRepaint(final int screenScaleIndex)
+	{
 		if (renderingMayBeCancelled && projector != null)
 			projector.cancel();
 		if (screenScaleIndex > requestedScreenScaleIndex)
 			requestedScreenScaleIndex = screenScaleIndex;
-		if (interval == null)
-		{
-			LOG.debug("Setting renderInterval to null");
-			this.renderInterval = null;
-		}
-		else {
-			LOG.debug("Setting renderInterval to union with ({} {})", Intervals.minAsLongArray(interval), Intervals.maxAsLongArray(interval));
-			this.renderInterval =
-					this.renderInterval == null
-							? new FinalInterval(interval)
-							: Intervals.union(this.renderInterval, interval);
-		}
-		if (this.renderInterval != null)
-		{
-			LOG.debug("Render interval is not null and! ({} {})", Intervals.minAsLongArray(this.renderInterval), Intervals.maxAsLongArray(this.renderInterval));
-		}
 		painterThread.requestRepaint();
 	}
 
@@ -983,7 +989,7 @@ public class MultiResolutionRendererGeneric<T>
 		screenScaleTransforms = new AffineTransform3D[screenScales.length];
 		maxScreenScaleIndex = screenScales.length - 1;
 		requestedScreenScaleIndex = maxScreenScaleIndex;
-		renderInterval = null;
+		renderInterval = Stream.generate(ArrayList::new).limit(screenScales.length).toArray(List[]::new);
 	}
 
 	private Interval intersect(final Interval i1, final Interval i2)
@@ -999,6 +1005,18 @@ public class MultiResolutionRendererGeneric<T>
 				Intervals.minAsLongArray(i2),
 				Intervals.maxAsLongArray(i2));
 		return Intervals.intersect(i1, i2);
+	}
+
+	private static Interval scaleInterval2D(final Interval interval, final double scale)
+	{
+		if (interval == null || scale == 1.0)
+			return interval;
+		else {
+			long[] min = {(long) Math.floor(scale * interval.min(0)), (long) Math.floor(scale * interval.min(1))};
+			long[] max = {(long) Math.ceil(scale * interval.max(0)), (long) Math.ceil(scale * interval.max(1))};
+			// LOG.warn("Scaled interval to ({} {}) (scale={})", min, max, scale);
+			return new FinalInterval(min, max);
+		}
 	}
 
 }
