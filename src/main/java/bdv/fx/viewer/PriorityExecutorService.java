@@ -1,11 +1,13 @@
 package bdv.fx.viewer;
 
+import org.janelia.saalfeldlab.util.DecorateRunnable;
 import org.janelia.saalfeldlab.util.MakeUnchecked;
 import org.jetbrains.annotations.NotNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.lang.invoke.MethodHandles;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.PriorityBlockingQueue;
@@ -19,7 +21,7 @@ public class PriorityExecutorService {
 
 	public static double DEFAULT_PRIORITY = 0.0;
 
-	interface TaskWithPriority extends Comparable<TaskWithPriority>, Runnable
+	public interface TaskWithPriority extends Comparable<TaskWithPriority>, Runnable
 	{
 		double priority();
 
@@ -80,29 +82,39 @@ public class PriorityExecutorService {
 
 	private final ExecutorService es;
 
-	public PriorityExecutorService(final ExecutorService es)
+	public PriorityExecutorService(final ExecutorService es, final int numThreads)
 	{
 		this.es = es;
-		Thread managerThread = new Thread(() -> {
-			while (!es.isShutdown() && !es.isTerminated()) {
-				TaskWithPriority nextTask = null;
-				try {
-					synchronized (this.queue) {
-						nextTask = queue.take();
-					}
-				} catch (InterruptedException ignored) {
+		for (int i = 0; i < numThreads; ++i) {
+			Thread managerThread = new Thread(() -> {
+				while (!es.isShutdown() && !es.isTerminated()) {
+					TaskWithPriority nextTask = null;
+					try {
+						synchronized (this.queue) {
+							nextTask = queue.take();
+							LOG.trace("Taking next task {}", nextTask);
+						}
+					} catch (InterruptedException ignored) {
 
+					}
+					if (nextTask != null) {
+						if (nextTask.isValid()) {
+							final CountDownLatch latch = new CountDownLatch(1);
+							es.submit(DecorateRunnable.after(nextTask, latch::countDown));
+							try {
+								latch.await();
+							} catch (InterruptedException e) {
+								e.printStackTrace();
+							}
+						}
+						else
+							nextTask.cancel();
+					}
 				}
-				if (nextTask != null) {
-					if (nextTask.isValid())
-						es.submit(nextTask);
-					else
-						nextTask.cancel();
-				}
-			}
-		});
-		managerThread.setDaemon(true);
-		managerThread.start();
+			});
+			managerThread.setDaemon(true);
+			managerThread.start();
+		}
 	}
 
 
@@ -124,7 +136,7 @@ public class PriorityExecutorService {
 
 	public void shutdown()
 	{
-		this.es.shutdown();
+		// TODO nothing to do here
 	}
 
 	public static void main(String[] args) throws InterruptedException {
@@ -132,7 +144,7 @@ public class PriorityExecutorService {
 		Runnable t2 = MakeUnchecked.runnable(() -> {Thread.sleep(50); System.out.println("t2");});
 		Runnable t3 = MakeUnchecked.runnable(() -> {Thread.sleep(50); System.out.println("t3");});
 		Runnable t4 = MakeUnchecked.runnable(() -> {Thread.sleep(50); System.out.println("t4");});
-		final PriorityExecutorService es = new PriorityExecutorService(Executors.newFixedThreadPool(1));
+		final PriorityExecutorService es = new PriorityExecutorService(Executors.newFixedThreadPool(1), 1);
 		es.submit(t1, 5.0);
 		es.submit(t2, 3.0);
 		es.submit(t3, 3.1);

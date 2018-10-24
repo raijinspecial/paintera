@@ -206,7 +206,9 @@ public class ViewerPanelFX
 	{
 		super();
 		this.setCenter(this.center);
-		this.renderingExecutorService = new PriorityExecutorService(Executors.newFixedThreadPool(optional.values.getNumRenderingThreads(), new RenderThreadFactory()));
+		this.renderingExecutorService = new PriorityExecutorService(
+				Executors.newFixedThreadPool(optional.values.getNumRenderingThreads(), new RenderThreadFactory()),
+				optional.values.getNumRenderingThreads());
 		options = optional.values;
 
 		this.state = new ViewerState(axisOrder);

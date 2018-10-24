@@ -493,7 +493,7 @@ public class MultiResolutionRendererGeneric<T>
 		}
 
 		// try rendering
-		final boolean success    = p.map(this.priority, createProjector);
+		final boolean success    = p.map(currentScreenScaleIndex == 0 ? this.priority : PriorityExecutorService.DEFAULT_PRIORITY, createProjector);
 		final long    rendertime = p.getLastFrameRenderNanoTime();
 
 		synchronized (this)
