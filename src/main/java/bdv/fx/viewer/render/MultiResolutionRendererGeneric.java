@@ -226,7 +226,7 @@ public class MultiResolutionRendererGeneric<T>
 	private final boolean useVolatileIfAvailable;
 
 	/**
-	 * Whether a repaint was {@link #requestRepaint() requested}. This will cause {@link
+	 * Whether a repaint was {@link #requestRepaint(double) requested}. This will cause {@link
 	 * CacheControl#prepareNextFrame()}.
 	 */
 	private boolean newFrameRequest;
@@ -493,7 +493,7 @@ public class MultiResolutionRendererGeneric<T>
 		}
 
 		// try rendering
-		final boolean success    = p.map(currentScreenScaleIndex == 0 ? this.priority : PriorityExecutorService.DEFAULT_PRIORITY, createProjector);
+		final boolean success    = p.map(currentScreenScaleIndex == 0 ? priority : PriorityExecutorService.DEFAULT_PRIORITY + 1, createProjector);
 		final long    rendertime = p.getLastFrameRenderNanoTime();
 
 		synchronized (this)
@@ -595,7 +595,7 @@ public class MultiResolutionRendererGeneric<T>
 					axisOrders.apply(sac.getSpimSource()),
 					timepoint,
 					viewerTransform,
-					currentScreenScaleIndex,
+					screenScaleIndex,
 					screenImage,
 					renderMaskArrays[0],
 					interpolation,
@@ -611,7 +611,7 @@ public class MultiResolutionRendererGeneric<T>
 			int                                           j                = 0;
 			for (final SourceAndConverter<?> sac : sacs)
 			{
-				final ArrayImg<ARGBType, IntArray> renderImage = renderImages[currentScreenScaleIndex][j];
+				final ArrayImg<ARGBType, IntArray> renderImage = renderImages[screenScaleIndex][j];
 				final byte[]                       maskArray   = renderMaskArrays[j];
 				final AxisOrder                    axisOrder   = axisOrders.apply(sac.getSpimSource());
 				++j;
@@ -621,7 +621,7 @@ public class MultiResolutionRendererGeneric<T>
 						axisOrder,
 						timepoint,
 						viewerTransform,
-						currentScreenScaleIndex,
+						screenScaleIndex,
 						renderImage,
 						maskArray,
 						interpolation,
@@ -729,7 +729,7 @@ public class MultiResolutionRendererGeneric<T>
 				                                          );
 			}
 
-		final AffineTransform3D screenScaleTransform = screenScaleTransforms[currentScreenScaleIndex];
+		final AffineTransform3D screenScaleTransform = screenScaleTransforms[screenScaleIndex];
 		final AffineTransform3D screenTransform      = viewerTransform.copy();
 		screenTransform.preConcatenate(screenScaleTransform);
 		final int bestLevel = MipmapTransforms.getBestMipMapLevel(screenTransform, source.getSpimSource(), timepoint);
@@ -765,7 +765,7 @@ public class MultiResolutionRendererGeneric<T>
 				source.getSpimSource(),
 				source.getSpimSource().getName()
 		         );
-		final AffineTransform3D              screenScaleTransform = screenScaleTransforms[currentScreenScaleIndex];
+		final AffineTransform3D              screenScaleTransform = screenScaleTransforms[screenScaleIndex];
 		final ArrayList<RandomAccessible<V>> renderList           = new ArrayList<>();
 		final Source<V>                      spimSource           = source.getSpimSource();
 		LOG.debug("Creating single source volatile projector for type={}", spimSource.getType());
