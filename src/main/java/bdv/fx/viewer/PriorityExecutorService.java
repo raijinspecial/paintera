@@ -7,6 +7,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.lang.invoke.MethodHandles;
+import java.util.Arrays;
+import java.util.Collection;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -14,6 +16,8 @@ import java.util.concurrent.PriorityBlockingQueue;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 public class PriorityExecutorService {
 
@@ -132,6 +136,21 @@ public class PriorityExecutorService {
 	public void submit(Runnable r)
 	{
 		this.submit(r, DEFAULT_PRIORITY);
+	}
+
+	public void submitAll(final Runnable[] runnables, final double[] priorities)
+	{
+		this.submitAll(IntStream.range(0, runnables.length).mapToObj(i -> new WrapAsTask(runnables[i], priorities[i])).collect(Collectors.toList()));
+	}
+
+	public void submitAll(final TaskWithPriority... tasks)
+	{
+		this.submitAll(Arrays.asList(tasks));
+	}
+
+	public void submitAll(final Collection<? extends TaskWithPriority> tasks)
+	{
+		this.queue.addAll(tasks);
 	}
 
 	public void shutdown()
